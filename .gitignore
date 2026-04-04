@@ -3,7 +3,7 @@ Manifest.toml
 *.jl.*.cov
 *.jl.mem
 experiments/data/
-figures/
+# figures/ is tracked for README images
 *.tar.gz
 *.h5
 .DS_Store
