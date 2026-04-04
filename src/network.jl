@@ -7,29 +7,30 @@
    ================================================================ =#
 
 """
-    CoopEdge(target, sources, strengths)
+    CoopEdge(target, sources, strength)
 
 Cooperative (AND-gate) regulation: gene `target` is activated only
-when ALL source proteins are present. Effective regulation is the
-minimum of individual Hill contributions.
+when ALL source proteins are bound. Effective regulation is
+`strength * prod(hill_activation(p[src], K, n) for src in sources)`.
 """
 struct CoopEdge
     target::Int
     sources::Vector{Int}
-    strengths::Vector{Float64}
+    strength::Float64
 end
 
 """
-    RedunEdge(target, sources, strengths)
+    RedunEdge(target, sources, strength)
 
 Redundant (OR-gate) regulation: gene `target` is activated when
-ANY source protein is present. Effective regulation is the maximum
-of individual Hill contributions.
+ANY source protein is bound. Uses inclusion-exclusion:
+`strength * (1 - prod(1 - hill_activation(p[src], K, n) for src in sources))`.
+For two sources this reduces to `strength * (h1 + h2 - h1*h2)`.
 """
 struct RedunEdge
     target::Int
     sources::Vector{Int}
-    strengths::Vector{Float64}
+    strength::Float64
 end
 
 """
@@ -76,12 +77,14 @@ function GeneNetwork(G::Int, basals::Vector{Float64}, interactions::Matrix{Float
 end
 
 """
-    GeneNetwork(basals, interactions[; k_on, k_off])
+    GeneNetwork(basals, interactions[; cooperative, redundant, k_on, k_off])
 
 Convenience constructor that infers G from basals.
-Optionally provide telegraph promoter switching rates.
+Optionally provide cooperative/redundant edges and telegraph switching rates.
 """
 function GeneNetwork(basals::Vector{Float64}, interactions::Matrix{Float64};
+                     cooperative::Vector{CoopEdge}=CoopEdge[],
+                     redundant::Vector{RedunEdge}=RedunEdge[],
                      k_on::Union{Nothing, Vector{Float64}}=nothing,
                      k_off::Union{Nothing, Vector{Float64}}=nothing)
     G = length(basals)
@@ -89,7 +92,7 @@ function GeneNetwork(basals::Vector{Float64}, interactions::Matrix{Float64};
     koff = k_off === nothing ? fill(Inf, G) : k_off
     @assert length(kon) == G
     @assert length(koff) == G
-    GeneNetwork(G, basals, interactions, CoopEdge[], RedunEdge[], kon, koff)
+    GeneNetwork(G, basals, interactions, cooperative, redundant, kon, koff)
 end
 
 """
@@ -147,20 +150,45 @@ end
 Compute the total regulatory input for gene `gene_i` from all
 other genes' protein concentrations, using Hill functions.
 
-Returns the sum of Hill-regulated contributions.
+Combines three regulation types:
+- **Additive**: independent Hill contributions summed
+- **Cooperative (AND)**: `strength * prod(hill(p[src]))` — all sources must be bound
+- **Redundant (OR)**: `strength * (1 - prod(1 - hill(p[src])))` — any source suffices
 """
 function regulatory_input(net::GeneNetwork, proteins::Vector{Float64},
                           gene_i::Int, K::Float64, n::Float64)::Float64
     reg = 0.0
+
+    # Additive Hill regulation
     for j in 1:net.G
         if j != gene_i
             a_ij = net.interactions[gene_i, j]
             if a_ij != 0.0
-                # Interaction strength is a_ij * β[i] (following GeneticNetworkSBI convention)
                 reg += hill_regulate(proteins[j], a_ij * net.basals[gene_i], K, n)
             end
         end
     end
+
+    # Cooperative (AND-gate): strength * β[i] * prod(hill_activation)
+    for edge in net.cooperative
+        edge.target == gene_i || continue
+        prod_h = 1.0
+        for src in edge.sources
+            prod_h *= hill_activation(proteins[src], K, n)
+        end
+        reg += edge.strength * net.basals[gene_i] * prod_h
+    end
+
+    # Redundant (OR-gate): strength * β[i] * (1 - prod(1 - hill_activation))
+    for edge in net.redundant
+        edge.target == gene_i || continue
+        prod_1mh = 1.0
+        for src in edge.sources
+            prod_1mh *= (1.0 - hill_activation(proteins[src], K, n))
+        end
+        reg += edge.strength * net.basals[gene_i] * (1.0 - prod_1mh)
+    end
+
     return reg
 end
 

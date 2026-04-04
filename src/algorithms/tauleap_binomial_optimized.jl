@@ -92,6 +92,22 @@ function _simulate_bintau_fast(::Val{G}, net::GeneNetwork, alg::BinomialTauLeapF
                 reg = A_pos_s * act_frac + A_neg_s * rep_frac
             end
 
+            # Cooperative (AND) and redundant (OR) corrections
+            for edge in net.cooperative
+                prod_h = 1.0
+                for src in edge.sources
+                    @inbounds prod_h *= act_frac[src]
+                end
+                @inbounds reg = Base.setindex(reg, reg[edge.target] + edge.strength * beta_s[edge.target] * prod_h, edge.target)
+            end
+            for edge in net.redundant
+                prod_1mh = 1.0
+                for src in edge.sources
+                    @inbounds prod_1mh *= (1.0 - act_frac[src])
+                end
+                @inbounds reg = Base.setindex(reg, reg[edge.target] + edge.strength * beta_s[edge.target] * (1.0 - prod_1mh), edge.target)
+            end
+
             @inbounds for i in 1:G
                 prop = @fastmath max(reg[i] + beta_s[i], 0.0)
 

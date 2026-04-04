@@ -12,6 +12,28 @@ The population dynamics module implements a Moran process with exponential volum
 
 ![Single-cell time series showing telegraph promoter switching, mRNA bursts and protein dynamics](figures/timeseries_bursty.png)
 
+## Regulation
+
+Gene regulatory interactions use Hill-function kinetics with three edge types that can be freely combined in a single network:
+
+- **Additive**: each regulator contributes independently. Gene i receives `sum_j hill(p_j, a_ij * beta_i, K, n)` from its regulators. This is the standard model where activation and repression strengths are stored in the interaction matrix A.
+- **Cooperative (AND-gate)**: gene is activated only when all source TFs are bound. Computed as `strength * beta * prod(hill(p_src))` for each cooperative edge. Models combinatorial promoters requiring multiple transcription factors.
+- **Redundant (OR-gate)**: gene is activated when any source TF is bound. Computed as `strength * beta * (1 - prod(1 - hill(p_src)))` using inclusion-exclusion. For two sources this reduces to `strength * (h1 + h2 - h1*h2)`.
+
+The default network sampler uses `:mixed` regulation, which combines all three types:
+
+```julia
+# Mixed regulation (default): additive + cooperative + redundant
+net = sample_network(10; regulation=:mixed)
+
+# Or construct manually
+coop = [CoopEdge(3, [1, 2], 5.0)]   # gene 3 needs both TF1 AND TF2
+redun = [RedunEdge(4, [1, 5], 4.0)]  # gene 4 needs TF1 OR TF5
+net = GeneNetwork(5, basals, A, coop, redun)
+```
+
+All regulation types are supported by all algorithms (SSA, tau-leap variants, CLE).
+
 ## Telegraph promoter model
 
 Each gene can optionally switch between an ON state (transcribes at rate beta) and an OFF state (silent), with rates k_on and k_off. This produces transcriptional bursting with burst size b = beta/k_off and burst frequency f = k_on. The mRNA Fano factor is F = 1 + b/(1 + k_on/k_off + mu_m/k_off), which in the bursty limit reduces to F = 1 + b. Genes with k_on = k_off = Inf (the default) behave as constitutive.
@@ -52,11 +74,13 @@ The default_algorithm function returns BinomialTauLeapFast for networks with 10 
 
 ## Comparison with real data
 
-The experiments directory includes a script that downloads the 10x Genomics PBMC 3K dataset, subsets to CD14+ monocytes and compares summary statistics against synthetic output. With calibrated parameters (basal rates matched to observed gene means, capture efficiency fitted from Fano factors), the simulator reproduces the sparsity and mean expression levels of real scRNA-seq. Overdispersion matching requires the telegraph promoter model, since even within a single cell type the median Fano factor is above 1.
+The experiments directory includes a script that downloads the 10x Genomics PBMC 3K dataset, subsets to CD14+ monocytes and compares summary statistics against synthetic output. With per-gene telegraph calibration (basal rates and burst parameters fitted from observed means and Fano factors), the simulator reproduces the marginal count distributions, mean-variance relationship and overdispersion of real scRNA-seq across high, medium and low variance genes.
 
-![UMAP embedding of real CD14+ monocytes alongside synthetic scRNA-seq cells](figures/umap_comparison.png)
+![Per-gene density overlays and mean-variance comparison of real CD14+ monocytes vs synthetic scRNA-seq](figures/real_vs_synthetic.png)
 
 ## Analytical validation
+
+![Protein Fano factor vs translation rate and LNA breakdown at low molecule counts](figures/analytical_validation.png)
 
 The test suite (183 tests) validates all algorithms against exact results from stochastic gene expression theory.
 

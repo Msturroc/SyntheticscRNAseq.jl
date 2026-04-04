@@ -72,6 +72,9 @@ function simulate(net::GeneNetwork, alg::CLE, kin::KineticParams;
 
     beta_vec = reshape(net.basals, G, 1)
 
+    has_coop = !isempty(net.cooperative)
+    has_redun = !isempty(net.redundant)
+
     for step in 1:n_steps
         @. P_n = P ^ hill_n
         @. denom = P_n + K_n
@@ -81,6 +84,26 @@ function simulate(net::GeneNetwork, alg::CLE, kin::KineticParams;
         mul!(reg_input, A_pos, act_frac)
         mul!(noise_m, A_neg, rep_frac)  # reuse as temp
         @. reg_input += noise_m
+
+        # Cooperative (AND) and redundant (OR) corrections
+        if has_coop || has_redun
+            @inbounds for c in 1:cell_num
+                for edge in net.cooperative
+                    prod_h = 1.0
+                    for src in edge.sources
+                        prod_h *= act_frac[src, c]
+                    end
+                    reg_input[edge.target, c] += edge.strength * net.basals[edge.target] * prod_h
+                end
+                for edge in net.redundant
+                    prod_1mh = 1.0
+                    for src in edge.sources
+                        prod_1mh *= (1.0 - act_frac[src, c])
+                    end
+                    reg_input[edge.target, c] += edge.strength * net.basals[edge.target] * (1.0 - prod_1mh)
+                end
+            end
+        end
 
         # mRNA update (decay includes dilution)
         randn!(rng, noise_m)
@@ -156,6 +179,9 @@ function _simulate_cle_population(net::GeneNetwork, alg::CLE,
 
     beta_vec = reshape(net.basals, G, 1)
 
+    has_coop = !isempty(net.cooperative)
+    has_redun = !isempty(net.redundant)
+
     for step in 1:n_steps
         # Volume as (1, N) for broadcasting
         V_row = reshape(V, 1, N)
@@ -169,6 +195,26 @@ function _simulate_cle_population(net::GeneNetwork, alg::CLE,
         mul!(reg_input, A_pos, act_frac)
         mul!(noise_m, A_neg, rep_frac)
         @. reg_input += noise_m
+
+        # Cooperative (AND) and redundant (OR) corrections
+        if has_coop || has_redun
+            @inbounds for c in 1:N
+                for edge in net.cooperative
+                    prod_h = 1.0
+                    for src in edge.sources
+                        prod_h *= act_frac[src, c]
+                    end
+                    reg_input[edge.target, c] += edge.strength * net.basals[edge.target] * prod_h
+                end
+                for edge in net.redundant
+                    prod_1mh = 1.0
+                    for src in edge.sources
+                        prod_1mh *= (1.0 - act_frac[src, c])
+                    end
+                    reg_input[edge.target, c] += edge.strength * net.basals[edge.target] * (1.0 - prod_1mh)
+                end
+            end
+        end
 
         # mRNA: volume-dependent transcription, intrinsic decay only
         # drift = (reg + β) * V - μ_m * m

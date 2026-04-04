@@ -72,16 +72,26 @@ end
 # ── Prior sampling ───────────────────────────────────────────────
 
 """
-    sample_network(G; rng, n_tf_range, targets_per_tf_range, infer_basals)
+    sample_network(G; rng, regulation, n_tf_range, targets_per_tf_range,
+                   n_coop_range, n_redun_range, infer_basals)
 
 Sample a random sparse gene regulatory network with TF-level sparsity.
+
+`regulation` controls which edge types are sampled:
+- `:additive` — standard independent Hill edges only
+- `:cooperative` — additive + AND-gate pairs
+- `:redundant` — additive + OR-gate pairs
+- `:mixed` (default) — additive + cooperative + redundant
 
 Returns a GeneNetwork.
 """
 function sample_network(G::Int;
                         rng::AbstractRNG=Random.default_rng(),
+                        regulation::Symbol=:mixed,
                         n_tf_range::UnitRange{Int} = G <= 5 ? (2:3) : (4:5),
                         targets_per_tf_range::UnitRange{Int} = 3:6,
+                        n_coop_range::UnitRange{Int} = 0:1,
+                        n_redun_range::UnitRange{Int} = 0:1,
                         infer_basals::Bool=true)
     n_interactions = G * (G - 1)
 
@@ -96,6 +106,7 @@ function sample_network(G::Int;
     A = zeros(G, G)
     n_tf = rand(rng, n_tf_range)
     active_tfs = sort(StatsBase.sample(rng, 1:G, n_tf, replace=false))
+    used_pairs = Set{Tuple{Int,Int}}()  # track (target, tf) to avoid overlap
 
     for tf in active_tfs
         n_targets = rand(rng, targets_per_tf_range)
@@ -110,8 +121,68 @@ function sample_network(G::Int;
             else
                 A[target, tf] = rand(rng, Distributions.Uniform(3.0, 10.0))
             end
+            push!(used_pairs, (target, tf))
         end
     end
 
-    return GeneNetwork(G, basals, A)
+    # Cooperative and redundant edges
+    coop_edges = CoopEdge[]
+    redun_edges = RedunEdge[]
+
+    if regulation in (:mixed, :cooperative)
+        n_coop = rand(rng, n_coop_range)
+        for _ in 1:n_coop
+            result = _sample_pair_edge(G, used_pairs, rng)
+            if result !== nothing
+                target, sources, strength = result
+                push!(coop_edges, CoopEdge(target, sources, strength))
+            end
+        end
+    end
+
+    if regulation in (:mixed, :redundant)
+        n_redun = rand(rng, n_redun_range)
+        for _ in 1:n_redun
+            result = _sample_pair_edge(G, used_pairs, rng)
+            if result !== nothing
+                target, sources, strength = result
+                push!(redun_edges, RedunEdge(target, sources, strength))
+            end
+        end
+    end
+
+    # For mixed regulation, guarantee at least one non-additive edge
+    if regulation == :mixed && isempty(coop_edges) && isempty(redun_edges)
+        result = _sample_pair_edge(G, used_pairs, rng)
+        if result !== nothing
+            target, sources, strength = result
+            push!(redun_edges, RedunEdge(target, sources, strength))
+        end
+    end
+
+    return GeneNetwork(G, basals, A, coop_edges, redun_edges,
+                       fill(Inf, G), fill(Inf, G))
+end
+
+"""Sample a cooperative/redundant edge: pick 2 TFs and a target not already used."""
+function _sample_pair_edge(G::Int, used_pairs::Set{Tuple{Int,Int}},
+                           rng::AbstractRNG)
+    G < 3 && return nothing
+    for _ in 1:20  # max attempts
+        sources = sort(StatsBase.sample(rng, 1:G, 2, replace=false))
+        possible_targets = [g for g in 1:G if g != sources[1] && g != sources[2]]
+        isempty(possible_targets) && continue
+        target = rand(rng, possible_targets)
+        pair1 = (target, sources[1])
+        pair2 = (target, sources[2])
+        if pair1 ∉ used_pairs && pair2 ∉ used_pairs
+            push!(used_pairs, pair1)
+            push!(used_pairs, pair2)
+            strength = rand(rng) < 0.5 ?
+                rand(rng, Distributions.Uniform(-10.0, -3.0)) :
+                rand(rng, Distributions.Uniform(3.0, 10.0))
+            return (target, sources, strength)
+        end
+    end
+    return nothing
 end

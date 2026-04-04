@@ -106,6 +106,22 @@ function _simulate_cle_fast(::Val{G}, net::GeneNetwork, alg::CLEFast,
                 reg = A_pos_s * act_frac + A_neg_s * rep_frac
             end
 
+            # Cooperative (AND) and redundant (OR) corrections
+            for edge in net.cooperative
+                prod_h = 1.0
+                for src in edge.sources
+                    @inbounds prod_h *= act_frac[src]
+                end
+                @inbounds reg = Base.setindex(reg, reg[edge.target] + edge.strength * beta_s[edge.target] * prod_h, edge.target)
+            end
+            for edge in net.redundant
+                prod_1mh = 1.0
+                for src in edge.sources
+                    @inbounds prod_1mh *= (1.0 - act_frac[src])
+                end
+                @inbounds reg = Base.setindex(reg, reg[edge.target] + edge.strength * beta_s[edge.target] * (1.0 - prod_1mh), edge.target)
+            end
+
             # mRNA update with @fastmath (FMA + SIMD)
             @fastmath begin
                 var_m = max.(reg .+ beta_s .+ mu_m .* max.(m_col, 0.0), 0.0)
