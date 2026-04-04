@@ -1,0 +1,9 @@
+Manifest.toml
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+experiments/data/
+figures/
+*.tar.gz
+*.h5
+.DS_Store
