@@ -21,6 +21,15 @@ using Random
 using Statistics
 using Printf
 
+# Try to load CUDA for GPU benchmarks
+const HAS_CUDA = try
+    using CUDA
+    CUDA.functional()
+catch
+    false
+end
+HAS_CUDA && println("CUDA available: ", CUDA.name(CUDA.device()))
+
 # ── Analytical formulas (no dilution, no regulation) ────────────
 # Two-stage model: ∅ →β mRNA →μ_m ∅; mRNA →k_t protein →μ_p ∅
 #
@@ -96,16 +105,20 @@ println("\nExact moments:")
 T_sim = 500.0
 N_cells = 20000
 
-# Algorithm list: (name, algorithm, dt)
+# Algorithm list: (name, algorithm, dt, gpu)
 algorithms = [
-    ("SSA",                 SSA(),                  nothing),
-    ("PoissonTauLeap",      PoissonTauLeap(0.1),    0.1),
-    ("BinomialTauLeap",     BinomialTauLeap(0.1),   0.1),
-    ("MidpointTauLeap",     MidpointTauLeap(0.1),   0.1),
-    ("CLE",                 CLE(0.1),               0.1),
-    ("CLEFast",             CLEFast(0.1),            0.1),
-    ("BinomialTauLeapFast", BinomialTauLeapFast(0.1), 0.1),
+    ("SSA",                 SSA(),                  nothing, false),
+    ("PoissonTauLeap",      PoissonTauLeap(0.1),    0.1,    false),
+    ("BinomialTauLeap",     BinomialTauLeap(0.1),   0.1,    false),
+    ("MidpointTauLeap",     MidpointTauLeap(0.1),   0.1,    false),
+    ("CLE",                 CLE(0.1),               0.1,    false),
+    ("CLEFast",             CLEFast(0.1),            0.1,    false),
+    ("BinomialTauLeapFast", BinomialTauLeapFast(0.1), 0.1,  false),
 ]
+if HAS_CUDA
+    push!(algorithms, ("GPU CLE",             CLE(0.1),             0.1, true))
+    push!(algorithms, ("GPU BinomialTauLeap", BinomialTauLeap(0.1), 0.1, true))
+end
 
 # Header
 println("\n", "-" ^ 100)
@@ -115,12 +128,16 @@ println("-" ^ 100)
 
 results = []
 
-for (name, alg, _dt) in algorithms
+for (name, alg, _dt, gpu) in algorithms
     rng = MersenneTwister(42)
 
     # Warmup (small run to trigger compilation)
     try
-        simulate(net, alg, kin; cell_num=10, T=10.0, readout=:both, rng=MersenneTwister(1))
+        if gpu
+            simulate(net, alg, kin, Val(:gpu); cell_num=10, T=10.0, readout=:both)
+        else
+            simulate(net, alg, kin; cell_num=10, T=10.0, readout=:both, rng=MersenneTwister(1))
+        end
     catch e
         println("  WARN: $name warmup failed: $e")
         continue
@@ -128,7 +145,11 @@ for (name, alg, _dt) in algorithms
 
     # Timed run
     t_start = time()
-    Y = simulate(net, alg, kin; cell_num=N_cells, T=T_sim, readout=:both, rng=rng)
+    if gpu
+        Y = simulate(net, alg, kin, Val(:gpu); cell_num=N_cells, T=T_sim, readout=:both)
+    else
+        Y = simulate(net, alg, kin; cell_num=N_cells, T=T_sim, readout=:both, rng=rng)
+    end
     elapsed = time() - t_start
 
     mom = compute_moments(Y)
@@ -183,12 +204,21 @@ println("\n", "-" ^ 80)
         "Method", "Mean max err", "Var max err", "Time")
 println("-" ^ 80)
 
-for (name, alg, _dt) in algorithms
+for (name, alg, _dt, gpu) in algorithms
     name == "SSA" && continue
+
+    # Warmup
+    if gpu
+        simulate(net5, alg, kin5, Val(:gpu); cell_num=100, T=10.0, readout=:protein)
+    end
 
     rng = MersenneTwister(42)
     t_start = time()
-    Y = simulate(net5, alg, kin5; cell_num=N5, T=T5, readout=:protein, rng=rng)
+    if gpu
+        Y = simulate(net5, alg, kin5, Val(:gpu); cell_num=N5, T=T5, readout=:protein)
+    else
+        Y = simulate(net5, alg, kin5; cell_num=N5, T=T5, readout=:protein, rng=rng)
+    end
     elapsed = time() - t_start
 
     sim_means = vec(mean(Y, dims=1))
@@ -237,13 +267,18 @@ println("\n", "-" ^ 80)
         "Method", "Mean max err", "Var max err", "Time")
 println("-" ^ 80)
 
-for (name, alg, _dt) in algorithms
+for (name, alg, _dt, gpu) in algorithms
     name == "SSA" && continue
 
     rng = MersenneTwister(42)
     t_start = time()
-    Y = simulate(net_reg, alg, kin5; cell_num=N_reg, T=T_reg,
-                 readout=:protein, rng=rng)
+    if gpu
+        Y = simulate(net_reg, alg, kin5, Val(:gpu); cell_num=N_reg, T=T_reg,
+                     readout=:protein)
+    else
+        Y = simulate(net_reg, alg, kin5; cell_num=N_reg, T=T_reg,
+                     readout=:protein, rng=rng)
+    end
     elapsed = time() - t_start
 
     sim_means = vec(mean(Y, dims=1))
@@ -283,11 +318,16 @@ println("\n", "-" ^ 100)
         "Method", "<m> err", "Var(m) err", "<p> err", "F(p) err", "Time")
 println("-" ^ 100)
 
-for (name, alg, _dt) in algorithms
+for (name, alg, _dt, gpu) in algorithms
     rng = MersenneTwister(42)
     t_start = time()
-    Y = simulate(net, alg, kin_dil; cell_num=N_cells, T=T_sim,
-                 readout=:both, rng=rng)
+    if gpu
+        Y = simulate(net, alg, kin_dil, Val(:gpu); cell_num=N_cells, T=T_sim,
+                     readout=:both)
+    else
+        Y = simulate(net, alg, kin_dil; cell_num=N_cells, T=T_sim,
+                     readout=:both, rng=rng)
+    end
     elapsed = time() - t_start
 
     mom = compute_moments(Y)

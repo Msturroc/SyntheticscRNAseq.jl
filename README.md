@@ -52,15 +52,17 @@ The package provides seven CPU algorithms and two GPU algorithms. All share the 
 
 | Algorithm | Type | Time (G=5, 5000 cells) | Max mean error | Max variance error |
 | --- | --- | --- | --- | --- |
-| SSA | Exact (Gillespie) | 29.2s | reference | reference |
-| PoissonTauLeap | Tau-leap | 4.0s | 0.9% | 4.8% |
-| BinomialTauLeap | Tau-leap | 5.9s | 1.9% | 4.1% |
-| MidpointTauLeap | Tau-leap | 5.5s | 0.6% | 4.2% |
-| CLE | Langevin SDE | 0.8s | 0.9% | 5.3% |
-| CLEFast | Langevin SDE | 0.5s | 0.7% | 3.7% |
-| BinomialTauLeapFast | Tau-leap | 4.3s | 1.6% | 3.3% |
+| SSA | Exact (Gillespie) | 14.3s | reference | reference |
+| PoissonTauLeap | Tau-leap | 6.8s | 0.4% | 5.7% |
+| BinomialTauLeap | Tau-leap | 10.0s | 2.4% | 6.3% |
+| MidpointTauLeap | Tau-leap | 9.3s | 0.8% | 6.2% |
+| CLE | Langevin SDE | 1.2s | 0.7% | 7.6% |
+| CLEFast | Langevin SDE | 1.3s | 0.5% | 3.3% |
+| BinomialTauLeapFast | Tau-leap | 7.6s | 2.8% | 4.1% |
+| **GPU CLE** | **Langevin SDE** | **0.22s** | **0.6%** | **2.9%** |
+| **GPU BinomialTauLeap** | **Tau-leap** | **0.45s** | **2.2%** | **4.6%** |
 
-The GPU variants (CLE and BinomialTauLeap) are loaded automatically when CUDA.jl is available and provide batched simulation via cuBLAS strided batched GEMM for training data generation.
+Timings measured on an NVIDIA RTX 5060. The GPU variants (CLE and BinomialTauLeap) are loaded automatically when CUDA.jl is available and provide batched simulation via cuBLAS strided batched GEMM for training data generation. The GPU BinomialTauLeap uses Poisson inverse CDF sampling for discrete event counts, which is exact up to the truncation point (50 terms, covering λ up to ~35).
 
 The default_algorithm function returns BinomialTauLeapFast for networks with 10 or fewer genes and CLE for larger networks. BinomialTauLeapFast uses StaticArrays for compile-time-specialised matmuls and Polyester for multithreading. CLE uses standard BLAS matmuls which scale better for large G.
 
@@ -86,7 +88,7 @@ The Grima LNA breakdown test confirms that BinomialTauLeap produces more accurat
 
 ```julia
 using Pkg
-Pkg.add(url="https://github.com/marcjwilliams1/SyntheticscRNAseq.jl")
+Pkg.add(url="https://github.com/msturroc/SyntheticscRNAseq.jl")
 ```
 
 For GPU support, also install CUDA.jl:
