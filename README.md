@@ -8,31 +8,23 @@ SyntheticscRNAseq.jl provides seven CPU and two GPU simulation algorithms for th
 
 The package simulates the full pipeline from gene regulatory network parameters to synthetic scRNA-seq count matrices. A gene network is defined by basal transcription rates, a regulatory interaction matrix and optionally per-gene promoter switching rates (telegraph/bursting model). The simulator propagates mRNA and protein counts for each cell using one of several stochastic algorithms, then applies a LogNormal-Binomial capture model that mimics the molecule sampling and cell-to-cell efficiency variation seen in real 10x Chromium data.
 
-The population dynamics module implements a Moran process with exponential volume growth, volume-dependent transcription and binomial molecule partitioning at cell division. This produces the correct steady-state volume distribution and emergent dilution effects without an explicit dilution rate term, following the framework described in Sturrock and Sturrock (2026).
+The population dynamics module implements a Moran process with exponential volume growth, volume-dependent transcription and binomial molecule partitioning at cell division. This produces the correct steady-state volume distribution and emergent dilution effects without an explicit dilution rate term.
 
-![Single-cell time series showing telegraph promoter switching, mRNA bursts and protein dynamics](figures/timeseries_bursty.png)
+![Algorithm comparison heatmaps showing promoter switching, mRNA and protein dynamics across SSA, tau-leap and CLE](figures/timeseries_bursty.png)
 
 ## Regulation
 
-Gene regulatory interactions use Hill-function kinetics with three edge types that can be freely combined in a single network:
+Gene regulatory interactions use Hill-function kinetics with three edge types that can be freely combined in a single network. Additive regulation is the standard model where each regulator contributes independently via `sum_j hill(p_j, a_ij * beta_i, K, n)`, with activation and repression strengths stored in the interaction matrix A. Cooperative (AND-gate) regulation activates a gene only when all source TFs are bound, computed as `strength * beta * prod(hill(p_src))`. Redundant (OR-gate) regulation activates a gene when any source TF is bound, computed as `strength * beta * (1 - prod(1 - hill(p_src)))` using inclusion-exclusion, which for two sources reduces to `strength * (h1 + h2 - h1*h2)`.
 
-- **Additive**: each regulator contributes independently. Gene i receives `sum_j hill(p_j, a_ij * beta_i, K, n)` from its regulators. This is the standard model where activation and repression strengths are stored in the interaction matrix A.
-- **Cooperative (AND-gate)**: gene is activated only when all source TFs are bound. Computed as `strength * beta * prod(hill(p_src))` for each cooperative edge. Models combinatorial promoters requiring multiple transcription factors.
-- **Redundant (OR-gate)**: gene is activated when any source TF is bound. Computed as `strength * beta * (1 - prod(1 - hill(p_src)))` using inclusion-exclusion. For two sources this reduces to `strength * (h1 + h2 - h1*h2)`.
-
-The default network sampler uses `:mixed` regulation, which combines all three types:
+The default network sampler uses mixed regulation, which combines all three types. All regulation types are supported by all algorithms (SSA, tau-leap variants, CLE).
 
 ```julia
-# Mixed regulation (default): additive + cooperative + redundant
 net = sample_network(10; regulation=:mixed)
 
-# Or construct manually
 coop = [CoopEdge(3, [1, 2], 5.0)]   # gene 3 needs both TF1 AND TF2
 redun = [RedunEdge(4, [1, 5], 4.0)]  # gene 4 needs TF1 OR TF5
 net = GeneNetwork(5, basals, A, coop, redun)
 ```
-
-All regulation types are supported by all algorithms (SSA, tau-leap variants, CLE).
 
 ## Telegraph promoter model
 
@@ -44,7 +36,7 @@ Each gene can optionally switch between an ON state (transcribes at rate beta) a
 
 When a PopulationConfig is provided, cells grow exponentially in volume and divide when reaching a threshold. At division, molecules are partitioned binomially between mother and daughter, and the daughter replaces a random cell in the population (Moran replacement). Transcription rate scales linearly with cell volume, so larger cells produce more mRNA. There is no explicit dilution term in this mode because dilution is emergent from the division process.
 
-For simulations without explicit population dynamics, the dilution field on KineticParams adds a constant dilution rate to both mRNA and protein decay, giving the analytical steady state from Sturrock and Sturrock (2026): mean mRNA = beta/(mu_m + mu) and protein Fano = 1 + k_t/(mu_m + mu_p + 2*mu).
+For simulations without explicit population dynamics, the dilution field on KineticParams adds a constant dilution rate to both mRNA and protein decay, giving the analytical steady state: mean mRNA = beta/(mu_m + mu) and protein Fano = 1 + k_t/(mu_m + mu_p + 2*mu).
 
 ![Population snapshot coloured by cell volume, showing volume-dependent expression](figures/population_snapshot.png)
 
@@ -86,7 +78,7 @@ The test suite (183 tests) validates all algorithms against exact results from s
 
 The two-stage model moments (Thattai and van Oudenaarden 2001) are checked for mRNA mean, mRNA variance, protein mean, protein Fano factor and mRNA-protein covariance across all seven CPU algorithms. The Fano factor relationship F = 1 + k_t/(mu_m + mu_p) is verified across a sweep of translation rates.
 
-The dilution model (Sturrock and Sturrock 2026) is validated by comparing molecule concentrations (counts divided by volume) between the population model and the constant-dilution model. The volume distribution in the Moran population is tested against the analytical prediction: mean volume = V_div/(2 ln 2), inverse volume = 2 ln 2/V_div, and median volume = V_div/sqrt(2).
+The dilution model is validated by comparing molecule concentrations (counts divided by volume) between the population model and the constant-dilution model. The volume distribution in the Moran population is tested against the analytical prediction: mean volume = V_div/(2 ln 2), inverse volume = 2 ln 2/V_div, and median volume = V_div/sqrt(2).
 
 The Grima LNA breakdown test confirms that BinomialTauLeap produces more accurate Fano factors than the CLE at low molecule counts (mean mRNA around 1), where the Gaussian diffusion approximation fails. At high counts (mean mRNA around 100), the CLE recovers its accuracy.
 
@@ -161,8 +153,6 @@ Pkg.test("SyntheticscRNAseq")
 Thattai M, van Oudenaarden A. Intrinsic noise in gene regulatory networks. PNAS, 2001.
 
 Peccoud J, Ycart B. Markovian modeling of gene product synthesis. Theoretical Population Biology, 1995.
-
-Sturrock M, Sturrock CT. Analytical enrichment formulas for gene expression in growing cell populations. bioRxiv, 2026.
 
 Thomas P, Shahrezaei V. Coordination of gene expression noise with cell size. Cell Systems, 2021.
 

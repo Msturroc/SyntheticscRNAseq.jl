@@ -30,6 +30,7 @@ struct PopulationConfig
     V_div::Float64
     V_init::Tuple{Float64, Float64}
     div_check_interval::Int
+    growth_noise::Float64
 end
 
 function PopulationConfig(;
@@ -38,8 +39,9 @@ function PopulationConfig(;
     V_div::Float64 = 2.0,
     V_init::Tuple{Float64, Float64} = (0.8, 1.2),
     div_check_interval::Int = 10,
+    growth_noise::Float64 = 0.0,
 )
-    PopulationConfig(cell_num, growth_rate, V_div, V_init, div_check_interval)
+    PopulationConfig(cell_num, growth_rate, V_div, V_init, div_check_interval, growth_noise)
 end
 
 """
@@ -116,13 +118,24 @@ end
 # ── Division + Moran replacement ─────────────────────────────────
 
 """
-    grow_volumes!(state, pop, dt)
+    grow_volumes!(state, pop, dt; rng)
 
-Exponential volume growth: V *= exp(λ * dt) for all cells.
+Exponential volume growth. If `growth_noise > 0`, each cell gets an
+independent Gaussian perturbation to its growth rate, breaking the
+deterministic synchronization that otherwise creates persistent
+cell-cycle waves in the Moran process.
 """
-function grow_volumes!(state::PopulationState, pop::PopulationConfig, dt::Float64)
-    factor = exp(pop.growth_rate * dt)
-    state.volumes .*= factor
+function grow_volumes!(state::PopulationState, pop::PopulationConfig, dt::Float64;
+                       rng::AbstractRNG=Random.default_rng())
+    if pop.growth_noise > 0.0
+        σ = pop.growth_noise
+        for c in eachindex(state.volumes)
+            state.volumes[c] *= exp((pop.growth_rate + σ * randn(rng)) * dt)
+        end
+    else
+        factor = exp(pop.growth_rate * dt)
+        state.volumes .*= factor
+    end
 end
 
 """
@@ -130,15 +143,14 @@ end
 
 Check all cells for division (V > V_div) and perform Moran replacement.
 
-Two-phase process to avoid order-dependent bias:
-  Phase 1: Identify dividers, do binomial partitioning, store daughters in buffer
-  Phase 2: Randomly assign each daughter to replace a cell in the population
+Two-phase process:
+  Phase 1: Identify dividers, do binomial partitioning, store daughters
+  Phase 2: Each daughter replaces a uniformly random cell (including
+           possibly its own mother — uniform death is age-independent)
 
-For each dividing cell:
-1. Binomial partition: each molecule → mother or daughter with p=0.5
-2. Mother keeps its slot, volume halved
-3. Daughter stored in buffer with half-volume
-4. After all divisions, each daughter replaces a uniformly random OTHER cell
+Note: with deterministic growth, finite-N Moran always exhibits
+persistent volume fluctuations (critical branching number = 1).
+The analytical p(v) = V_div/v² is an ensemble average.
 
 Returns the number of divisions that occurred.
 """
@@ -147,12 +159,11 @@ function division_check!(state::PopulationState, pop::PopulationConfig;
     G = size(state.mrna, 1)
     N = pop.cell_num
 
-    # Phase 1: identify dividers and create daughter states in buffer
     dividers = findall(v -> v > pop.V_div, state.volumes)
     n_div = length(dividers)
     n_div == 0 && return 0
 
-    # Daughter buffer: (G, n_div) for mrna/protein, (n_div,) for volumes
+    # Phase 1: partition molecules and halve mother volumes
     daughter_mrna = Matrix{Int}(undef, G, n_div)
     daughter_protein = Matrix{Int}(undef, G, n_div)
     daughter_volumes = Vector{Float64}(undef, n_div)
@@ -180,13 +191,9 @@ function division_check!(state::PopulationState, pop::PopulationConfig;
         daughter_volumes[k] = state.volumes[cell]
     end
 
-    # Phase 2: each daughter replaces a uniformly random cell (not its mother)
-    for (k, mother) in enumerate(dividers)
-        replaced = rand(rng, 1:N-1)
-        if replaced >= mother
-            replaced += 1
-        end
-
+    # Phase 2: each daughter replaces a uniformly random cell
+    for k in 1:n_div
+        replaced = rand(rng, 1:N)
         for g in 1:G
             state.mrna[g, replaced] = daughter_mrna[g, k]
             state.protein[g, replaced] = daughter_protein[g, k]

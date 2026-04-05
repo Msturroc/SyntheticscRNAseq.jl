@@ -1,11 +1,12 @@
 #= ================================================================
    Generate figures for the README.
 
-   1. Time series: promoter state, mRNA, protein, volume for a
-      single cell with telegraph (bursty) transcription
+   1. Algorithm comparison heatmaps (promoter, mRNA, protein)
    2. Steady-state distributions: mRNA histogram vs Poisson/NB
    3. Population snapshot: mRNA counts coloured by cell volume
-   4. UMAP: synthetic scRNA-seq vs real PBMC 3K monocytes
+   4. Capture model: mean-variance before/after
+   5. Real vs synthetic scRNA-seq comparison
+   6. Analytical validation
 
    Usage:
      julia --project=. scripts/generate_figures.jl
@@ -14,150 +15,188 @@
 using Pkg
 Pkg.activate(dirname(@__DIR__))
 
+println("Loading packages..."); flush(stdout)
 using SyntheticscRNAseq
 using Random
 using Statistics
 using CairoMakie
 using UMAP
 using SparseArrays
+println("Packages loaded."); flush(stdout)
 
 mkpath(joinpath(dirname(@__DIR__), "figures"))
 figdir = joinpath(dirname(@__DIR__), "figures")
 
 # ═══════════════════════════════════════════════════════════════
-#  Figure 1: Single-cell time series with bursty transcription
-#            and volume growth/division
+#  Figure 1: Algorithm comparison heatmaps
+#            3 rows (promoter, mRNA, protein) x 4 cols (SSA, BinomialTL, PoissonTL, CLE)
 # ═══════════════════════════════════════════════════════════════
 
-println("Generating Figure 1: single-cell time series...")
+println("Generating Figure 1: algorithm comparison heatmaps..."); flush(stdout)
 
-using Distributions: Binomial as BinomDist
+using Distributions: Binomial as BinomDist, Binomial, Poisson
 
-function ssa_trajectory_with_volume(;
-        beta=5.0, k_on=0.03, k_off=0.3,
-        k_t=2.0, mu_m=0.1, mu_p=0.3,
-        growth_rate=0.03, V_div=2.0, V_init=1.0,
-        T=1000.0, rng=Random.default_rng())
+# ── Trajectory recorders (single-cell, no volume) ──
 
-    m = 0; p = 0; V = V_init
+function ssa_trajectory(; beta=5.0, k_on=0.03, k_off=0.3,
+        k_t=2.0, mu_m=0.1, mu_p=0.3, T=1000.0, dt_out=0.1,
+        rng=Random.default_rng())
+    m = 0; p = 0
     promoter = rand(rng) < k_on / (k_on + k_off)
-
-    ts = Float64[0.0]
-    ms = Int[m]; ps = Int[p]; prom = Bool[promoter]; Vs = Float64[V]
-    div_times = Float64[]
-
-    t = 0.0
+    n_out = ceil(Int, T / dt_out) + 1
+    t_grid = range(0, T, length=n_out)
+    ms = zeros(Int, n_out); ps = zeros(Int, n_out); prs = zeros(Int, n_out)
+    ms[1] = m; ps[1] = p; prs[1] = Int(promoter)
+    out_idx = 2; t = 0.0
     while t < T
-        prop_tx    = promoter ? beta * V : 0.0
-        prop_mdecay = mu_m * m
-        prop_tl    = k_t * m
-        prop_pdecay = mu_p * p
-        prop_on    = !promoter ? k_on : 0.0
-        prop_off   = promoter ? k_off : 0.0
-
-        a_total = prop_tx + prop_mdecay + prop_tl + prop_pdecay + prop_on + prop_off
-        a_total <= 0 && break
-
-        tau = -log(rand(rng)) / a_total
-        t += tau
-        t > T && break
-
-        # Advance volume deterministically
-        V *= exp(growth_rate * tau)
-
-        # Check division (may need multiple if tau was large)
-        while V > V_div
-            m = rand(rng, BinomDist(m, 0.5))
-            p = rand(rng, BinomDist(p, 0.5))
-            V /= 2.0
-            push!(div_times, t)
+        prop_tx = promoter ? beta : 0.0
+        prop_md = mu_m * m; prop_tl = k_t * m; prop_pd = mu_p * p
+        prop_on = !promoter ? k_on : 0.0; prop_off = promoter ? k_off : 0.0
+        a = prop_tx + prop_md + prop_tl + prop_pd + prop_on + prop_off
+        a <= 0 && break
+        tau = -log(rand(rng)) / a
+        t += tau; t > T && break
+        while out_idx <= n_out && t_grid[out_idx] <= t
+            ms[out_idx] = m; ps[out_idx] = p; prs[out_idx] = Int(promoter)
+            out_idx += 1
         end
-
-        # Fire reaction
-        r = rand(rng) * a_total
-        cum = prop_tx
-        if r < cum
-            m += 1
-        else
-            cum += prop_mdecay
-            if r < cum; m = max(m - 1, 0)
-            else
-                cum += prop_tl
+        r = rand(rng) * a; cum = prop_tx
+        if r < cum; m += 1
+        else; cum += prop_md
+            if r < cum; m = max(m-1, 0)
+            else; cum += prop_tl
                 if r < cum; p += 1
-                else
-                    cum += prop_pdecay
-                    if r < cum; p = max(p - 1, 0)
-                    else
-                        cum += prop_on
+                else; cum += prop_pd
+                    if r < cum; p = max(p-1, 0)
+                    else; cum += prop_on
                         if r < cum; promoter = true
-                        else; promoter = false
-                        end
-                    end
-                end
-            end
-        end
-
-        push!(ts, t); push!(ms, m); push!(ps, p); push!(prom, promoter); push!(Vs, V)
+                        else; promoter = false; end
+                    end; end; end; end
     end
-
-    return ts, ms, ps, prom, Vs, div_times
+    for i in out_idx:n_out; ms[i] = m; ps[i] = p; prs[i] = Int(promoter); end
+    return t_grid, ms, ps, prs
 end
 
-# Generate 4 independent trajectories
-n_traces = 4
-trace_colors_m = [(:steelblue, 0.7), (:royalblue, 0.7), (:dodgerblue, 0.7), (:cornflowerblue, 0.7)]
-trace_colors_p = [(:firebrick, 0.7), (:indianred, 0.7), (:salmon, 0.7), (:tomato, 0.7)]
-trace_colors_v = [(:teal, 0.7), (:darkcyan, 0.7), (:cadetblue, 0.7), (:lightseagreen, 0.7)]
-
-traces = []
-for s in 1:n_traces
-    rng_t = MersenneTwister(s)
-    push!(traces, ssa_trajectory_with_volume(; T=1000.0, rng=rng_t))
+function tauleap_trajectory(; beta=5.0, k_on=0.03, k_off=0.3,
+        k_t=2.0, mu_m=0.1, mu_p=0.3, T=1000.0, dt=0.1,
+        use_binomial=true, rng=Random.default_rng())
+    m = 0; p = 0
+    promoter = rand(rng) < k_on / (k_on + k_off)
+    n_steps = ceil(Int, T / dt)
+    ms = zeros(Int, n_steps+1); ps = zeros(Int, n_steps+1); prs = zeros(Int, n_steps+1)
+    ms[1] = m; ps[1] = p; prs[1] = Int(promoter)
+    for step in 1:n_steps
+        if promoter
+            if rand(rng) < (1.0 - exp(-k_off * dt)); promoter = false; end
+        else
+            if rand(rng) < (1.0 - exp(-k_on * dt)); promoter = true; end
+        end
+        prop_tx = promoter ? beta : 0.0
+        n_tx = rand(rng, Poisson(prop_tx * dt))
+        if use_binomial && m > 0
+            n_md = rand(rng, Binomial(m, 1.0 - exp(-mu_m * dt)))
+        else
+            n_md = rand(rng, Poisson(mu_m * max(m, 0) * dt))
+        end
+        m = max(m + n_tx - n_md, 0)
+        n_tl = rand(rng, Poisson(k_t * max(m, 0) * dt))
+        if use_binomial && p > 0
+            n_pd = rand(rng, Binomial(p, 1.0 - exp(-mu_p * dt)))
+        else
+            n_pd = rand(rng, Poisson(mu_p * max(p, 0) * dt))
+        end
+        p = max(p + n_tl - n_pd, 0)
+        ms[step+1] = m; ps[step+1] = p; prs[step+1] = Int(promoter)
+    end
+    t_grid = range(0, T, length=n_steps+1)
+    return t_grid, ms, ps, prs
 end
 
-fig1 = Figure(size=(900, 800))
-
-# Panel 1: Promoter (show only first trace — overlapping step functions are unreadable)
-ax1 = Axis(fig1[1, 1], ylabel="Promoter", yticks=([0, 1], ["OFF", "ON"]))
-ts1, _, _, prom1, _, _ = traces[1]
-for i in 1:length(ts1)-1
-    lines!(ax1, [ts1[i], ts1[i+1]], [Int(prom1[i]), Int(prom1[i])],
-           color=prom1[i] ? :seagreen : :grey70, linewidth=2)
+function cle_trajectory(; beta=5.0, k_on=0.03, k_off=0.3,
+        k_t=2.0, mu_m=0.1, mu_p=0.3, T=1000.0, dt=0.1,
+        rng=Random.default_rng())
+    m = 0.0; p = 0.0
+    promoter = rand(rng) < k_on / (k_on + k_off)
+    n_steps = ceil(Int, T / dt)
+    ms = zeros(Float64, n_steps+1); ps = zeros(Float64, n_steps+1); prs = zeros(Int, n_steps+1)
+    ms[1] = m; ps[1] = p; prs[1] = Int(promoter)
+    sqrt_dt = sqrt(dt)
+    for step in 1:n_steps
+        if promoter
+            if rand(rng) < (1.0 - exp(-k_off * dt)); promoter = false; end
+        else
+            if rand(rng) < (1.0 - exp(-k_on * dt)); promoter = true; end
+        end
+        prop_tx = promoter ? beta : 0.0
+        var_m = max(prop_tx + mu_m * max(m, 0.0), 0.0)
+        m = max(m + (prop_tx - mu_m * m) * dt + randn(rng) * sqrt_dt * sqrt(var_m), 0.0)
+        var_p = max(k_t * max(m, 0.0) + mu_p * max(p, 0.0), 0.0)
+        p = max(p + (k_t * m - mu_p * p) * dt + randn(rng) * sqrt_dt * sqrt(var_p), 0.0)
+        ms[step+1] = m; ps[step+1] = p; prs[step+1] = Int(promoter)
+    end
+    t_grid = range(0, T, length=n_steps+1)
+    return t_grid, round.(Int, ms), round.(Int, ps), prs
 end
-ylims!(ax1, -0.1, 1.1)
-hidexdecorations!(ax1, grid=false)
 
-# Panel 2: mRNA — all traces overlaid
-ax2 = Axis(fig1[2, 1], ylabel="mRNA")
-for (k, (ts_k, ms_k, _, _, _, _)) in enumerate(traces)
-    stairs!(ax2, ts_k, Float64.(ms_k), color=trace_colors_m[k], linewidth=0.8)
+# ── Generate heatmap data ──
+
+n_cells = 10; T_fig1 = 1000.0
+
+algs_fig1 = [
+    ("SSA", (s) -> ssa_trajectory(; T=T_fig1, dt_out=0.1, rng=MersenneTwister(s))),
+    ("BinomialTL", (s) -> tauleap_trajectory(; T=T_fig1, use_binomial=true, rng=MersenneTwister(s))),
+    ("PoissonTL", (s) -> tauleap_trajectory(; T=T_fig1, use_binomial=false, rng=MersenneTwister(s))),
+    ("CLE", (s) -> cle_trajectory(; T=T_fig1, rng=MersenneTwister(s))),
+]
+
+all_data = Dict{String, NamedTuple}()
+for (name, fn) in algs_fig1
+    println("  $name..."); flush(stdout)
+    local t_grid, M, P, PR
+    for c in 1:n_cells
+        tg, ms, ps, prs = fn(c)
+        if c == 1
+            t_grid = collect(tg); n_t = length(tg)
+            M = zeros(Int, n_t, n_cells); P = zeros(Int, n_t, n_cells); PR = zeros(Int, n_t, n_cells)
+        end
+        M[:, c] = ms; P[:, c] = ps; PR[:, c] = prs
+    end
+    all_data[name] = (t=t_grid, M=M, P=P, PR=PR)
 end
-hidexdecorations!(ax2, grid=false)
 
-# Panel 3: Protein — all traces overlaid
-ax3 = Axis(fig1[3, 1], ylabel="Protein")
-for (k, (ts_k, _, ps_k, _, _, _)) in enumerate(traces)
-    stairs!(ax3, ts_k, Float64.(ps_k), color=trace_colors_p[k], linewidth=0.8)
+println("  Plotting heatmaps..."); flush(stdout)
+fig1 = Figure(size=(1200, 700))
+alg_names = ["SSA", "BinomialTL", "PoissonTL", "CLE"]
+
+for (col, name) in enumerate(alg_names)
+    d = all_data[name]
+
+    ax = Axis(fig1[1, col], title=name)
+    heatmap!(ax, d.t, 1:n_cells, d.PR, colormap=[:white, :seagreen])
+    col > 1 && hideydecorations!(ax, grid=false)
+    col == 1 && (ax.ylabel = "Promoter")
+    hidexdecorations!(ax, grid=false)
+
+    ax2 = Axis(fig1[2, col])
+    heatmap!(ax2, d.t, 1:n_cells, Float64.(d.M), colormap=:Blues)
+    col > 1 && hideydecorations!(ax2, grid=false)
+    col == 1 && (ax2.ylabel = "mRNA")
+    hidexdecorations!(ax2, grid=false)
+
+    ax3 = Axis(fig1[3, col], xlabel="Time")
+    heatmap!(ax3, d.t, 1:n_cells, Float64.(d.P), colormap=:Reds)
+    col > 1 && hideydecorations!(ax3, grid=false)
+    col == 1 && (ax3.ylabel = "Protein")
 end
-hidexdecorations!(ax3, grid=false)
-
-# Panel 4: Volume — all traces overlaid
-ax4 = Axis(fig1[4, 1], ylabel="Volume", xlabel="Time")
-for (k, (ts_k, _, _, _, Vs_k, _)) in enumerate(traces)
-    lines!(ax4, ts_k, Vs_k, color=trace_colors_v[k], linewidth=0.8)
-end
-hlines!(ax4, [2.0], color=:grey50, linestyle=:dash, linewidth=1)
-
-linkxaxes!(ax1, ax2, ax3, ax4)
 
 save(joinpath(figdir, "timeseries_bursty.png"), fig1, px_per_unit=3)
-println("  Saved timeseries_bursty.png")
+println("  Saved timeseries_bursty.png"); flush(stdout)
 
 # ═══════════════════════════════════════════════════════════════
 #  Figure 2: mRNA distribution — constitutive vs bursty
 # ═══════════════════════════════════════════════════════════════
 
-println("Generating Figure 2: mRNA distributions...")
+println("Generating Figure 2: mRNA distributions..."); flush(stdout)
 
 kin_dist = KineticParams(k_t=1.0, K_d=50.0, n=2.0, mu_m=0.1, mu_p=0.2)
 
@@ -184,22 +223,22 @@ hist!(ax, m_b, bins=0:1:min(maximum(m_b), 150), normalization=:pdf,
 
 axislegend(ax, position=:rt)
 save(joinpath(figdir, "mrna_distribution.png"), fig2, px_per_unit=3)
-println("  Saved mrna_distribution.png")
+println("  Saved mrna_distribution.png"); flush(stdout)
 
 # ═══════════════════════════════════════════════════════════════
 #  Figure 3: Population dynamics — volume and expression
 # ═══════════════════════════════════════════════════════════════
 
-println("Generating Figure 3: population snapshot...")
+println("Generating Figure 3: population snapshot..."); flush(stdout)
 
 net_pop = GeneNetwork(2, [3.0, 1.5], [0.0 4.0; -3.0 0.0])
 kin_pop = KineticParams(k_t=1.0, K_d=50.0, n=4.0, mu_m=0.1, mu_p=0.2)
 pop = PopulationConfig(cell_num=2000, growth_rate=0.03,
-                       V_div=2.0, V_init=(0.8, 1.2), div_check_interval=5)
+                       V_div=2.0, V_init=(1.0, 2.0), div_check_interval=1)
 
 rng = MersenneTwister(42)
 Y_pop, state = simulate_with_state(net_pop, BinomialTauLeap(0.1), kin_pop, pop;
-                                   T=300.0, readout=:both, rng=rng)
+                                   T=500.0, readout=:both, rng=rng)
 V = state.volumes
 
 fig3 = Figure(size=(800, 400))
@@ -212,24 +251,25 @@ Colorbar(fig3[1, 2], sc, label="Volume")
 
 ax3b = Axis(fig3[1, 3], xlabel="Cell volume", ylabel="Count",
             title="Volume distribution")
-hist!(ax3b, V, bins=30, color=(:teal, 0.7))
-vlines!(ax3b, [pop.V_div / 2, pop.V_div], color=:red, linestyle=:dash, linewidth=1.5)
+hist!(ax3b, V, bins=range(pop.V_div/2, pop.V_div, length=30),
+      color=(:teal, 0.4), strokecolor=:teal, strokewidth=0.5)
 
 save(joinpath(figdir, "population_snapshot.png"), fig3, px_per_unit=3)
-println("  Saved population_snapshot.png")
+println("  Saved population_snapshot.png"); flush(stdout)
 
 # ═══════════════════════════════════════════════════════════════
 #  Figure 4: Capture model — before and after
 # ═══════════════════════════════════════════════════════════════
 
-println("Generating Figure 4: capture model effect...")
+println("Generating Figure 4: capture model effect..."); flush(stdout)
 
-net_cap = GeneNetwork(5, [3.0, 1.5, 5.0, 2.0, 0.8], zeros(5, 5))
+basals_cap = exp.(range(log(0.3), log(10.0), length=20))
+net_cap = GeneNetwork(20, basals_cap, zeros(20, 20))
 kin_cap = KineticParams(k_t=2.0, K_d=50.0, n=4.0, mu_m=0.1, mu_p=0.2, dilution=0.03)
 
 rng = MersenneTwister(42)
 Y_true = simulate(net_cap, BinomialTauLeap(0.1), kin_cap;
-                  cell_num=2000, T=300.0, readout=:mrna, rng=rng)
+                  cell_num=3000, T=300.0, readout=:mrna, rng=rng)
 
 cap10 = CaptureModel(efficiency=0.10, efficiency_std=0.3, readout=:mrna)
 Y_cap10 = Float64.(apply_capture(Y_true, cap10; rng=MersenneTwister(42)))
@@ -252,14 +292,14 @@ scatter!(ax4b, gm_cap, gv_cap, color=:firebrick, markersize=10)
 lines!(ax4b, [0.01, 10], [0.01, 10], color=:grey, linestyle=:dash, label="Poisson")
 
 save(joinpath(figdir, "capture_model.png"), fig4, px_per_unit=3)
-println("  Saved capture_model.png")
+println("  Saved capture_model.png"); flush(stdout)
 
 # ═══════════════════════════════════════════════════════════════
 #  Figure 5: Real vs synthetic scRNA-seq — per-gene density
 #            comparison + mean-variance + Fano scatter
 # ═══════════════════════════════════════════════════════════════
 
-println("Generating Figure 5: real vs synthetic comparison...")
+println("Generating Figure 5: real vs synthetic comparison..."); flush(stdout)
 
 # Load real monocyte data
 function read_10x_mtx(f)
@@ -337,7 +377,7 @@ if isfile(joinpath(pbmc_dir, "matrix.mtx"))
     kin_fig = KineticParams(k_t=2.0, K_d=50.0, n=4.0, mu_m=mu_m_cal, mu_p=0.2, dilution=dilution_cal)
     alg_fig = BinomialTauLeap(0.1)
 
-    println("  Simulating $n_mono cells x $G_fig genes with BinomialTauLeap...")
+    println("  Simulating $n_mono cells x $G_fig genes with BinomialTauLeap..."); flush(stdout)
     rng = MersenneTwister(42)
     Y_synth = simulate(net_fig, alg_fig, kin_fig;
                        cell_num=n_mono, T=500.0, readout=:mrna, rng=rng)
@@ -352,13 +392,13 @@ if isfile(joinpath(pbmc_dir, "matrix.mtx"))
     synth_vars  = vec(var(Y_cap_synth, dims=1))
     synth_fanos = synth_vars ./ max.(synth_means, 1e-6)
 
-    println("  Diagnostics:")
+    println("  Diagnostics:"); flush(stdout)
     println("    Real  — sparsity=$(round(sum(X_sel .== 0)/length(X_sel), digits=3)), " *
             "median Fano=$(round(median(real_fanos), digits=2)), " *
-            "lib-size CV=$(round(std(vec(sum(X_sel, dims=2)))/max(mean(vec(sum(X_sel, dims=2))),1e-6), digits=3))")
+            "lib-size CV=$(round(std(vec(sum(X_sel, dims=2)))/max(mean(vec(sum(X_sel, dims=2))),1e-6), digits=3))"); flush(stdout)
     println("    Synth — sparsity=$(round(sum(Y_cap_synth .== 0)/length(Y_cap_synth), digits=3)), " *
             "median Fano=$(round(median(synth_fanos), digits=2)), " *
-            "lib-size CV=$(round(std(vec(sum(Y_cap_synth, dims=2)))/max(mean(vec(sum(Y_cap_synth, dims=2))),1e-6), digits=3))")
+            "lib-size CV=$(round(std(vec(sum(Y_cap_synth, dims=2)))/max(mean(vec(sum(Y_cap_synth, dims=2))),1e-6), digits=3))"); flush(stdout)
 
     # ── Figure 5: 3x3 layout ──
     # Top two rows: 6 gene density overlays (high/medium/low variance)
@@ -403,17 +443,20 @@ if isfile(joinpath(pbmc_dir, "matrix.mtx"))
     lines!(ax_mv, mv_range, mv_range, color=:grey50, linestyle=:dash, linewidth=1)
     axislegend(ax_mv, position=:lt, labelsize=10)
 
-    # Bottom-right: Fano factor comparison (real vs synth per gene)
+    # Bottom-right: Fano factor comparison (real vs synth per gene, log-log)
     ax_fano = Axis(fig5[3, 3], xlabel="Real Fano", ylabel="Synthetic Fano",
-                   title="Fano factor (per gene)")
+                   title="Fano factor (per gene)",
+                   xscale=log10, yscale=log10)
     scatter!(ax_fano, real_fanos, synth_fanos, color=:black, markersize=6)
-    fano_range = [0, max(maximum(real_fanos), maximum(synth_fanos)) * 1.1]
-    lines!(ax_fano, fano_range, fano_range, color=:grey50, linestyle=:dash, linewidth=1)
+    fano_lo = minimum(filter(>(0), [real_fanos; synth_fanos])) * 0.8
+    fano_hi = max(maximum(real_fanos), maximum(synth_fanos)) * 1.2
+    lines!(ax_fano, [fano_lo, fano_hi], [fano_lo, fano_hi],
+           color=:grey50, linestyle=:dash, linewidth=1)
 
     save(joinpath(figdir, "real_vs_synthetic.png"), fig5, px_per_unit=3)
-    println("  Saved real_vs_synthetic.png")
+    println("  Saved real_vs_synthetic.png"); flush(stdout)
 else
-    println("  PBMC 3K data not found. Run experiments/compare_real_scrnaseq.jl first.")
+    println("  PBMC 3K data not found. Run experiments/compare_real_scrnaseq.jl first."); flush(stdout)
 end
 
 # ═══════════════════════════════════════════════════════════════
@@ -423,7 +466,7 @@ end
 #  (c) Thomas volume distribution vs analytical PDF
 # ═══════════════════════════════════════════════════════════════
 
-println("Generating Figure 6: analytical validation...")
+println("Generating Figure 6: analytical validation..."); flush(stdout)
 
 fig6 = Figure(size=(1100, 800))
 
@@ -512,7 +555,7 @@ axislegend(ax6b, position=:lb, labelsize=9)
 # ── Panel (c): mRNA Fano vs mean expression — CLE breakdown ──
 # mRNA is Poisson (Fano=1) regardless of mean. CLE deviates at low counts.
 
-println("  Running mRNA Fano sweep...")
+println("  Running mRNA Fano sweep..."); flush(stdout)
 betas_sweep = [0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0]
 
 ax6c = Axis(fig6[2, 1], xlabel="Mean mRNA (<m> = β/μ_m)",
@@ -520,7 +563,6 @@ ax6c = Axis(fig6[2, 1], xlabel="Mean mRNA (<m> = β/μ_m)",
             title="(c) mRNA Fano vs mean expression",
             xscale=log10)
 
-# SSA with fewer cells (exact but slow at high counts)
 for (alg_name, alg_fn, n_cells_s, color, marker) in [
         ("SSA",        () -> SSA(),                 5000,  :black,     :circle),
         ("BinomialTL", () -> BinomialTauLeap(0.05), 10000, :steelblue, :utriangle),
@@ -531,7 +573,7 @@ for (alg_name, alg_fn, n_cells_s, color, marker) in [
         net_s = GeneNetwork(1, [b], zeros(1, 1))
         kin_s = KineticParams(k_t=1.0, K_d=50.0, n=2.0, mu_m=mu_m_val, mu_p=mu_p_val)
         Y_s = simulate(net_s, alg_fn(), kin_s;
-                       cell_num=n_cells_s, T=300.0, readout=:mrna,
+                       cell_num=n_cells_s, T=500.0, readout=:mrna,
                        rng=MersenneTwister(42))
         m_s = vec(Y_s)
         push!(means_s, mean(m_s))
@@ -543,46 +585,39 @@ end
 
 hlines!(ax6c, [1.0], color=:grey40, linewidth=2, linestyle=:dash,
         label="Poisson (F=1)")
-axislegend(ax6c, position=:rt, labelsize=9)
+axislegend(ax6c, position=:rb, labelsize=9)
 
 # ── Panel (d): Thomas — volume distribution vs analytical PDF ──
 
-println("  Running population simulation for volume distribution...")
+println("  Running population simulation for volume distribution..."); flush(stdout)
 V_div_val = 2.0
 net_pop_val = GeneNetwork(1, [beta_val], zeros(1, 1))
 kin_pop_val = KineticParams(k_t=1.0, K_d=50.0, n=2.0, mu_m=mu_m_val, mu_p=mu_p_val)
-pop_val = PopulationConfig(cell_num=3000, growth_rate=0.03,
-                           V_div=V_div_val, V_init=(0.8, 1.2), div_check_interval=5)
+pop_val = PopulationConfig(cell_num=5000, growth_rate=0.03,
+                           V_div=V_div_val, V_init=(1.0, 2.0), div_check_interval=1)
 
 _, state_val = simulate_with_state(net_pop_val, BinomialTauLeap(0.1), kin_pop_val, pop_val;
                                    T=500.0, readout=:both, rng=MersenneTwister(42))
 V_sim = state_val.volumes
 
-ax6d = Axis(fig6[2, 2], xlabel="Cell volume", ylabel="Density",
+ax6d = Axis(fig6[2, 2], xlabel="Cell volume", ylabel="Count",
             title="(d) Steady-state volume distribution")
 
-hist!(ax6d, V_sim, bins=range(1.0, 2.0, length=60), normalization=:pdf,
-      color=(:steelblue, 0.4))
+hist!(ax6d, V_sim, bins=range(V_div_val/2, V_div_val, length=30),
+      color=(:steelblue, 0.4), strokecolor=:steelblue, strokewidth=0.5)
 
-v_range = range(V_div_val / 2, V_div_val, length=200)
-pdf_analytical = 1.0 ./ (v_range .* log(2))
-lines!(ax6d, v_range, pdf_analytical, color=:firebrick, linewidth=3,
-       label="p(v) = 1/(v ln 2)")
-
-V_mean_exact = V_div_val / (2 * log(2))
-V_median_exact = V_div_val / sqrt(2)
 V_mean_sim = mean(V_sim)
 V_median_sim = median(V_sim)
 
-vlines!(ax6d, [V_mean_exact], color=:black, linewidth=2, linestyle=:dash,
-        label="Mean ($(round(V_mean_exact, digits=2))/$(round(V_mean_sim, digits=2)))")
-vlines!(ax6d, [V_median_exact], color=:darkorange, linewidth=2, linestyle=:dashdot,
-        label="Median ($(round(V_median_exact, digits=2))/$(round(V_median_sim, digits=2)))")
+vlines!(ax6d, [V_mean_sim], color=:black, linewidth=2, linestyle=:dash,
+        label="Mean ($(round(V_mean_sim, digits=2)))")
+vlines!(ax6d, [V_median_sim], color=:darkorange, linewidth=2, linestyle=:dashdot,
+        label="Median ($(round(V_median_sim, digits=2)))")
 
 xlims!(ax6d, 0.95, 2.05)
 axislegend(ax6d, position=:rt, labelsize=9)
 
 save(joinpath(figdir, "analytical_validation.png"), fig6, px_per_unit=3)
-println("  Saved analytical_validation.png")
+println("  Saved analytical_validation.png"); flush(stdout)
 
-println("\nAll figures saved to $figdir")
+println("\nAll figures saved to $figdir"); flush(stdout)

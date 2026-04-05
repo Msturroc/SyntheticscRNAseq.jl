@@ -27,7 +27,7 @@
     # Run just volume growth + division for many steps
     dt = 0.1
     for step in 1:5000
-        grow_volumes!(state, pop, dt)
+        grow_volumes!(state, pop, dt; rng=rng)
         if step % pop.div_check_interval == 0
             division_check!(state, pop; rng=rng)
         end

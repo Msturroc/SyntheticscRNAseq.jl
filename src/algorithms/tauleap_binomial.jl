@@ -211,7 +211,7 @@ function _simulate_population(net::GeneNetwork, alg::BinomialTauLeap,
         end
 
         # ── Volume growth ──
-        grow_volumes!(state, pop, dt)
+        grow_volumes!(state, pop, dt; rng=rng)
 
         # ── Division check (every div_check_interval steps) ──
         if step % pop.div_check_interval == 0
@@ -275,7 +275,7 @@ function simulate_with_state(net::GeneNetwork, alg::BinomialTauLeap,
             end
         end
 
-        grow_volumes!(state, pop, dt)
+        grow_volumes!(state, pop, dt; rng=rng)
         if step % pop.div_check_interval == 0
             division_check!(state, pop; rng=rng)
         end
