@@ -18,9 +18,24 @@ Gene regulatory interactions use Hill-function kinetics with three edge types th
 
 The default network sampler uses mixed regulation, which combines all three types. All regulation types are supported by all algorithms (SSA, tau-leap variants, CLE).
 
+The `sample_network` function controls network sparsity via keyword arguments whose defaults scale with G to keep density realistic:
+
+| Parameter | G ≤ 5 | G ≤ 10 | G > 10 |
+| --- | --- | --- | --- |
+| `n_tf_range` | 1:2 | 2:3 | 4:5 |
+| `targets_per_tf_range` | 1:3 | 2:4 | 3:6 |
+| `n_coop_range` | 0:1 | 0:1 | 1:2 |
+| `n_redun_range` | 0:1 | 0:1 | 1:2 |
+
+Small networks use fewer TFs and targets to avoid saturation (where every gene regulates every other). Large networks guarantee at least one cooperative and one redundant edge to maintain regulatory complexity. All defaults can be overridden:
+
 ```julia
 net = sample_network(10; regulation=:mixed)
 
+# Override defaults for sparser networks
+net = sample_network(20; n_tf_range=2:3, targets_per_tf_range=2:3)
+
+# Manual construction
 coop = [CoopEdge(3, [1, 2], 5.0)]   # gene 3 needs both TF1 AND TF2
 redun = [RedunEdge(4, [1, 5], 4.0)]  # gene 4 needs TF1 OR TF5
 net = GeneNetwork(5, basals, A, coop, redun)

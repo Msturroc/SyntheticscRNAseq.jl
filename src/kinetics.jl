@@ -76,22 +76,39 @@ end
                    n_coop_range, n_redun_range, infer_basals)
 
 Sample a random sparse gene regulatory network with TF-level sparsity.
+First `n_tf` genes are chosen as active transcription factors, then each
+TF is assigned a random number of targets with random activation/repression
+strengths.
 
-`regulation` controls which edge types are sampled:
-- `:additive` — standard independent Hill edges only
-- `:cooperative` — additive + AND-gate pairs
-- `:redundant` — additive + OR-gate pairs
-- `:mixed` (default) — additive + cooperative + redundant
+# Keyword arguments
+
+- `regulation::Symbol = :mixed` — edge types to include:
+  `:additive`, `:cooperative`, `:redundant`, or `:mixed` (all three).
+- `n_tf_range` — how many genes act as TFs.  Default scales with G to
+  keep network density realistic:
+  G ≤ 5 → `1:2`, G ≤ 10 → `2:3`, G > 10 → `4:5`.
+- `targets_per_tf_range` — targets per active TF.  Default scales:
+  G ≤ 5 → `1:3`, G ≤ 10 → `2:4`, G > 10 → `3:6`.
+- `n_coop_range` — number of cooperative (AND-gate) edges.
+  Default `0:1` for G ≤ 10, `1:2` for G > 10.
+- `n_redun_range` — number of redundant (OR-gate) edges.
+  Default `0:1` for G ≤ 10, `1:2` for G > 10.
+- `infer_basals::Bool = true` — sample basals from LogNormal; if false,
+  all basals are set to exp(-1).
+
+The G-dependent defaults keep small networks sparse (avoiding saturation
+where every gene regulates every other) while ensuring large networks
+have enough regulatory complexity.  All defaults can be overridden.
 
 Returns a GeneNetwork.
 """
 function sample_network(G::Int;
                         rng::AbstractRNG=Random.default_rng(),
                         regulation::Symbol=:mixed,
-                        n_tf_range::UnitRange{Int} = G <= 5 ? (2:3) : (4:5),
-                        targets_per_tf_range::UnitRange{Int} = 3:6,
-                        n_coop_range::UnitRange{Int} = 0:1,
-                        n_redun_range::UnitRange{Int} = 0:1,
+                        n_tf_range::UnitRange{Int} = G <= 5 ? (1:2) : G <= 10 ? (2:3) : (4:5),
+                        targets_per_tf_range::UnitRange{Int} = G <= 5 ? (1:3) : G <= 10 ? (2:4) : (3:6),
+                        n_coop_range::UnitRange{Int} = G > 10 ? (1:2) : (0:1),
+                        n_redun_range::UnitRange{Int} = G > 10 ? (1:2) : (0:1),
                         infer_basals::Bool=true)
     n_interactions = G * (G - 1)
 
