@@ -120,13 +120,13 @@ telegraph_mean(a, b, c)      # = 20.0
 telegraph_fano(a, b, c)      # = 7.25
 ```
 
-Four parameter regimes are tested covering the full range of telegraph behaviour: constitutive (fast switching, near-Poisson), moderate bursting (overdispersed unimodal), strong bursting (geometric-like tail), and bimodal (slow switching with distinct OFF and ON peaks). SSA, BinomialTauLeap and CLE empirical distributions are compared against the exact PMF using the Kolmogorov-Smirnov statistic and L1 distance.
+Four parameter regimes are tested covering the full range of telegraph behaviour: constitutive (fast switching, near-Poisson), moderate bursting (overdispersed unimodal), strong bursting (geometric-like tail), and bimodal (slow switching with distinct OFF and ON peaks). SSA and BinomialTauLeap empirical distributions are compared against the exact PMF using the Kolmogorov-Smirnov statistic and L1 distance. The CLE is not included in this test because it does not model discrete promoter switching -- that limitation is quantified separately in the CLE accuracy scaling test below.
 
 ### CLE accuracy scaling (Grima 2011)
 
 ![CLE mean and Fano factor error vs system size on log-log axes](figures/cle_accuracy_scaling.png)
 
-Grima (2011) showed that CLE errors scale as O(omega^{-3/2}) for non-equilibrium systems, where omega is the effective molecule count. The validation script sweeps the mean mRNA count from 1 to 200 by varying basal transcription rate, measuring CLE and BinomialTauLeap errors against the exact telegraph moments. The CLE error decreases with system size following the predicted power law, while BinomialTauLeap maintains uniformly low error across all system sizes including the low-count regime where the CLE's Gaussian diffusion approximation breaks down.
+Grima (2011) showed that CLE errors scale as O(omega^{-3/2}) for non-equilibrium systems, where omega is the effective molecule count. The validation script sweeps the mean mRNA count from 0.5 to 100 by varying basal transcription rate on a constitutive (non-telegraph) gene, measuring CLE and BinomialTauLeap errors against SSA and exact analytical moments. The CLE mean error decreases with system size following the predicted power law (measured exponent -1.48 vs predicted -1.5), while BinomialTauLeap maintains uniformly low error across all system sizes including the low-count regime where the CLE's Gaussian diffusion approximation breaks down.
 
 ## Installation
 

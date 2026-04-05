@@ -67,10 +67,12 @@ const N_CELLS = 20000    # large enough for tight KS test
 const T_SIM   = 500.0    # sufficient equilibration (slowest timescale ~1/k_on = 50)
 const DT      = 0.05     # small dt for tau-leap accuracy
 
+# Note: CLE does not implement telegraph promoter switching — it uses
+# the basal rate directly without ON/OFF gating. Only discrete algorithms
+# (SSA, tau-leap) handle the telegraph model correctly.
 algorithms = [
     ("SSA",             SSA()),
     ("BinomialTauLeap", BinomialTauLeap(DT)),
-    ("CLE",             CLE(DT)),
 ]
 
 # ── Helper functions ─────────────────────────────────────────────
@@ -219,7 +221,6 @@ fig = Figure(size=(1200, 900))
 colors = Dict(
     "SSA" => :steelblue,
     "BinomialTauLeap" => :darkorange,
-    "CLE" => :forestgreen,
 )
 
 for (i, rd) in enumerate(plot_data)
@@ -256,9 +257,8 @@ end
 Legend(fig[3, 1:2],
        [PolyElement(color=(:grey70, 0.5)),
         LineElement(color=:steelblue, linewidth=2),
-        LineElement(color=:darkorange, linewidth=2),
-        LineElement(color=:forestgreen, linewidth=2)],
-       ["Exact (Peccoud-Ycart)", "SSA", "BinomialTauLeap", "CLE"];
+        LineElement(color=:darkorange, linewidth=2)],
+       ["Exact (Peccoud-Ycart)", "SSA", "BinomialTauLeap"];
        orientation=:horizontal, tellheight=true, tellwidth=false,
        framevisible=false)
 
@@ -273,7 +273,7 @@ println("  Saved: $figpath")
 println("\n\n", "=" ^ 90)
 println("  GRIMA (2011): CLE Accuracy Scaling with System Size")
 println("  Constitutive gene (no telegraph): CLE applicable")
-println("  Protein Fano error vs SSA, swept by beta")
+println("  Errors vs exact analytical moments, swept by beta")
 println("=" ^ 90)
 flush(stdout)
 
@@ -304,12 +304,6 @@ for beta_g in beta_values
     net_g = GeneNetwork([beta_g], zeros(1, 1))
     kin_g = KineticParams(k_t=K_T, K_d=50.0, n=2.0, mu_m=MU_M, mu_p=MU_P)
 
-    # SSA as reference for protein Fano (small counts need exact algorithm)
-    rng = MersenneTwister(42)
-    Y_ssa = simulate(net_g, SSA(), kin_g;
-                     cell_num=N_CELLS, T=T_SIM, readout=:both, rng=rng)
-    ssa_p_fano = var(Y_ssa[:, 2]) / max(mean(Y_ssa[:, 2]), 1e-10)
-
     # BinomialTauLeap
     rng = MersenneTwister(42)
     Y_bt = simulate(net_g, BinomialTauLeap(DT), kin_g;
@@ -324,10 +318,11 @@ for beta_g in beta_values
     cle_m_mean = mean(Y_cle[:, 1])
     cle_p_fano = var(Y_cle[:, 2]) / max(mean(Y_cle[:, 2]), 1e-10)
 
+    # Compare against exact analytical Fano (not SSA, to avoid sampling noise floor)
     bt_m_err = relerr(bt_m_mean, mean_m_exact)
     cle_m_err = relerr(cle_m_mean, mean_m_exact)
-    bt_f_err = relerr(bt_p_fano, ssa_p_fano)
-    cle_f_err = relerr(cle_p_fano, ssa_p_fano)
+    bt_f_err = relerr(bt_p_fano, fano_p_exact)
+    cle_f_err = relerr(cle_p_fano, fano_p_exact)
 
     @printf("  %-6.2f | %8.1f | %10.2f%%  | %10.2f%%  | %12.2f%%  | %12.2f%%\n",
             beta_g, mean_m_exact, 100*bt_m_err, 100*cle_m_err, 100*bt_f_err, 100*cle_f_err)
@@ -367,27 +362,33 @@ ax_mean = Axis(fig2[1, 1];
                xscale=log10, yscale=log10,
                titlesize=13)
 ax_fano = Axis(fig2[1, 2];
-               title="Protein Fano error vs system size\n(constitutive gene, vs SSA)",
+               title="Protein Fano error vs system size\n(constitutive gene, vs exact)",
                xlabel="mean mRNA count",
-               ylabel="Relative error (vs SSA)",
+               ylabel="Relative error (vs exact)",
                xscale=log10, yscale=log10,
                titlesize=13)
 
-scatter!(ax_mean, omega_values, cle_mean_errors; color=:forestgreen, label="CLE")
-scatter!(ax_mean, omega_values, bt_mean_errors; color=:darkorange, label="BinomialTauLeap")
+scatter!(ax_mean, omega_values, cle_mean_errors; color=:forestgreen, markersize=10, label="CLE")
+scatter!(ax_mean, omega_values, bt_mean_errors; color=:darkorange, markersize=10, label="BinomialTauLeap")
 
-# Reference slopes
+# Reference slopes anchored to CLE data (fit intercept, use Grima's slope)
 ω_ref = range(minimum(omega_values), maximum(omega_values), length=50)
-lines!(ax_mean, collect(ω_ref), 0.5 .* (ω_ref ./ ω_ref[1]) .^ (-1.5);
-       color=:grey50, linestyle=:dash, label="Ω^{-3/2} (Grima)")
+# Anchor at geometric mean of CLE data
+i_mid = length(cle_mean_errors) ÷ 2
+c_mean = cle_mean_errors[i_mid] * omega_values[i_mid]^1.5
+lines!(ax_mean, collect(ω_ref), c_mean .* collect(ω_ref) .^ (-1.5);
+       color=:grey50, linestyle=:dash, linewidth=1.5,
+       label="slope -3/2 (Grima)")
 
-scatter!(ax_fano, omega_values, cle_fano_errors; color=:forestgreen, label="CLE")
-scatter!(ax_fano, omega_values, bt_fano_errors; color=:darkorange, label="BinomialTauLeap")
-lines!(ax_fano, collect(ω_ref), 0.5 .* (ω_ref ./ ω_ref[1]) .^ (-2.0);
-       color=:grey50, linestyle=:dash, label="Ω^{-2} (Grima)")
+scatter!(ax_fano, omega_values, cle_fano_errors; color=:forestgreen, markersize=10, label="CLE")
+scatter!(ax_fano, omega_values, bt_fano_errors; color=:darkorange, markersize=10, label="BinomialTauLeap")
+c_fano = cle_fano_errors[i_mid] * omega_values[i_mid]^2.0
+lines!(ax_fano, collect(ω_ref), c_fano .* collect(ω_ref) .^ (-2.0);
+       color=:grey50, linestyle=:dash, linewidth=1.5,
+       label="slope -2 (Grima)")
 
-axislegend(ax_mean; position=:lb, framevisible=false, labelsize=10)
-axislegend(ax_fano; position=:lb, framevisible=false, labelsize=10)
+axislegend(ax_mean; position=:rt, framevisible=false, labelsize=10)
+axislegend(ax_fano; position=:rt, framevisible=false, labelsize=10)
 
 figpath2 = joinpath(dirname(@__DIR__), "figures", "cle_accuracy_scaling.png")
 save(figpath2, fig2; px_per_unit=3)
