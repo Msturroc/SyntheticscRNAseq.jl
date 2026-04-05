@@ -26,6 +26,9 @@ include("capture.jl")
 # ── Validation utilities ─────────────────────────────────────────
 include("validate.jl")
 
+# ── Analytical solutions ─────────────────────────────────────────
+include("analytical.jl")
+
 # ── Default algorithm selection ──────────────────────────────────
 include("default_algorithm.jl")
 
@@ -54,6 +57,10 @@ export apply_capture
 
 # Validation
 export ks_statistic, ks_critical_value, compare_moments, convergence_rate
+
+# Analytical solutions
+export telegraph_logpmf, telegraph_pmf, telegraph_distribution
+export telegraph_mean, telegraph_variance, telegraph_fano
 
 # Population dynamics
 export PopulationState, initialize_population

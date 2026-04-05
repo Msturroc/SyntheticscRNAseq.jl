@@ -99,6 +99,35 @@ The dilution model is validated by comparing molecule concentrations (counts div
 
 The Grima LNA breakdown test confirms that BinomialTauLeap produces more accurate Fano factors than the CLE at low molecule counts (mean mRNA around 1), where the Gaussian diffusion approximation fails. At high counts (mean mRNA around 100), the CLE recovers its accuracy.
 
+### Telegraph model: exact distributional validation
+
+![Empirical vs exact mRNA distributions across four parameter regimes](figures/telegraph_validation.png)
+
+Beyond moment-level checks, the package validates the full mRNA probability distribution against the exact Peccoud-Ycart (1995) steady-state solution for the two-state telegraph model. The exact PMF is
+
+    P(n) = exp(-c) * c^n / n! * (a)_n / (a+b)_n * 1F1(b; a+b+n; c)
+
+where a = k_on/mu_m, b = k_off/mu_m, c = beta/mu_m are dimensionless switching and transcription rates, (a)_n is the Pochhammer symbol, and 1F1 is Kummer's confluent hypergeometric function. The implementation uses the Kummer transform to ensure numerical stability for large c (all series terms positive, no cancellation).
+
+The `telegraph_distribution`, `telegraph_mean`, `telegraph_variance` and `telegraph_fano` functions are exported and can be used directly for analytical comparisons:
+
+```julia
+using SyntheticscRNAseq
+
+a, b, c = 2.0, 5.0, 70.0  # moderate bursting
+p_exact = telegraph_distribution(a, b, c)   # full PMF vector
+telegraph_mean(a, b, c)      # = 20.0
+telegraph_fano(a, b, c)      # = 7.25
+```
+
+Four parameter regimes are tested covering the full range of telegraph behaviour: constitutive (fast switching, near-Poisson), moderate bursting (overdispersed unimodal), strong bursting (geometric-like tail), and bimodal (slow switching with distinct OFF and ON peaks). SSA, BinomialTauLeap and CLE empirical distributions are compared against the exact PMF using the Kolmogorov-Smirnov statistic and L1 distance.
+
+### CLE accuracy scaling (Grima 2011)
+
+![CLE mean and Fano factor error vs system size on log-log axes](figures/cle_accuracy_scaling.png)
+
+Grima (2011) showed that CLE errors scale as O(omega^{-3/2}) for non-equilibrium systems, where omega is the effective molecule count. The validation script sweeps the mean mRNA count from 1 to 200 by varying basal transcription rate, measuring CLE and BinomialTauLeap errors against the exact telegraph moments. The CLE error decreases with system size following the predicted power law, while BinomialTauLeap maintains uniformly low error across all system sizes including the low-count regime where the CLE's Gaussian diffusion approximation breaks down.
+
 ## Installation
 
 ```julia
@@ -171,7 +200,11 @@ Thattai M, van Oudenaarden A. Intrinsic noise in gene regulatory networks. PNAS,
 
 Peccoud J, Ycart B. Markovian modeling of gene product synthesis. Theoretical Population Biology, 1995.
 
+Cao Z, Grima R. Analytical distributions for detailed models of stochastic gene expression in eukaryotic cells. PNAS, 2020.
+
 Thomas P, Shahrezaei V. Coordination of gene expression noise with cell size. Cell Systems, 2021.
+
+Grima R, Thomas P, Straube AV. How accurate are the nonlinear chemical Fokker-Planck and chemical Langevin equations? Journal of Chemical Physics, 2011.
 
 Grima R. An effective rate equation approach to reaction kinetics in small volumes. Journal of Chemical Physics, 2010.
 
