@@ -375,7 +375,7 @@ ax_mean = Axis(fig2[1, 1];
                titlesize=13)
 ax_fano = Axis(fig2[1, 2];
                title="Protein Fano error vs system size\n(constitutive gene, vs exact)",
-               xlabel="mean mRNA count",
+               xlabel="mean protein count",
                ylabel="Relative error (vs exact)",
                xscale=log10, yscale=log10,
                titlesize=13)
@@ -392,10 +392,14 @@ lines!(ax_mean, collect(ω_ref), c_mean .* collect(ω_ref) .^ (-1.5);
        color=:grey50, linestyle=:dash, linewidth=1.5,
        label="slope -3/2 (Grima)")
 
-scatter!(ax_fano, omega_values, cle_fano_errors; color=:forestgreen, markersize=10, label="CLE")
-scatter!(ax_fano, omega_values, bt_fano_errors; color=:darkorange, markersize=10, label="BinomialTauLeap")
-c_fano = cle_fano_errors[i_mid] * omega_values[i_mid]^2.0
-lines!(ax_fano, collect(ω_ref), c_fano .* collect(ω_ref) .^ (-2.0);
+# Protein system size: <p> = k_t * <m> / mu_p
+protein_omega = omega_values .* (K_T / MU_P)
+ω_p_ref = range(minimum(protein_omega), maximum(protein_omega), length=50)
+
+scatter!(ax_fano, protein_omega, cle_fano_errors; color=:forestgreen, markersize=10, label="CLE")
+scatter!(ax_fano, protein_omega, bt_fano_errors; color=:darkorange, markersize=10, label="BinomialTauLeap")
+c_fano = cle_fano_errors[i_mid] * protein_omega[i_mid]^2.0
+lines!(ax_fano, collect(ω_p_ref), c_fano .* collect(ω_p_ref) .^ (-2.0);
        color=:grey50, linestyle=:dash, linewidth=1.5,
        label="slope -2 (Grima)")
 
