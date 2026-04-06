@@ -282,6 +282,7 @@ flush(stdout)
 # Here we test Grima's result: CLE accuracy improves with system size.
 
 beta_values = [0.05, 0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0]
+const N_SEEDS = 10  # average over multiple seeds to reduce sampling noise
 
 println()
 @printf("  %-6s | %8s | %12s | %12s | %14s | %14s\n",
@@ -304,21 +305,32 @@ for beta_g in beta_values
     net_g = GeneNetwork([beta_g], zeros(1, 1))
     kin_g = KineticParams(k_t=K_T, K_d=50.0, n=2.0, mu_m=MU_M, mu_p=MU_P)
 
-    # BinomialTauLeap
-    rng = MersenneTwister(42)
-    Y_bt = simulate(net_g, BinomialTauLeap(DT), kin_g;
-                    cell_num=N_CELLS, T=T_SIM, readout=:both, rng=rng)
-    bt_m_mean = mean(Y_bt[:, 1])
-    bt_p_fano = var(Y_bt[:, 2]) / max(mean(Y_bt[:, 2]), 1e-10)
+    # Average over N_SEEDS independent runs
+    bt_m_means = Float64[]
+    bt_p_fanos = Float64[]
+    cle_m_means = Float64[]
+    cle_p_fanos = Float64[]
 
-    # CLE
-    rng = MersenneTwister(42)
-    Y_cle = simulate(net_g, CLE(DT), kin_g;
-                     cell_num=N_CELLS, T=T_SIM, readout=:both, rng=rng)
-    cle_m_mean = mean(Y_cle[:, 1])
-    cle_p_fano = var(Y_cle[:, 2]) / max(mean(Y_cle[:, 2]), 1e-10)
+    for seed in 1:N_SEEDS
+        rng = MersenneTwister(41 + seed)
+        Y_bt = simulate(net_g, BinomialTauLeap(DT), kin_g;
+                        cell_num=N_CELLS, T=T_SIM, readout=:both, rng=rng)
+        push!(bt_m_means, mean(Y_bt[:, 1]))
+        push!(bt_p_fanos, var(Y_bt[:, 2]) / max(mean(Y_bt[:, 2]), 1e-10))
 
-    # Compare against exact analytical Fano (not SSA, to avoid sampling noise floor)
+        rng = MersenneTwister(41 + seed)
+        Y_cle = simulate(net_g, CLE(DT), kin_g;
+                         cell_num=N_CELLS, T=T_SIM, readout=:both, rng=rng)
+        push!(cle_m_means, mean(Y_cle[:, 1]))
+        push!(cle_p_fanos, var(Y_cle[:, 2]) / max(mean(Y_cle[:, 2]), 1e-10))
+    end
+
+    bt_m_mean = mean(bt_m_means)
+    bt_p_fano = mean(bt_p_fanos)
+    cle_m_mean = mean(cle_m_means)
+    cle_p_fano = mean(cle_p_fanos)
+
+    # Compare against exact analytical values
     bt_m_err = relerr(bt_m_mean, mean_m_exact)
     cle_m_err = relerr(cle_m_mean, mean_m_exact)
     bt_f_err = relerr(bt_p_fano, fano_p_exact)
