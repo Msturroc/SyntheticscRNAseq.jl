@@ -347,18 +347,15 @@ for beta_g in beta_values
     push!(bt_fano_errors, max(bt_f_err, 1e-6))
 end
 
-# Fit convergence rates
-if length(omega_values) >= 3
-    cle_mean_rate = convergence_rate(omega_values, cle_mean_errors)
-    cle_fano_rate = convergence_rate(omega_values, cle_fano_errors)
-    bt_mean_rate = convergence_rate(omega_values, bt_mean_errors)
-    bt_fano_rate = convergence_rate(omega_values, bt_fano_errors)
+# Fit convergence rates (exclude last 2 points where CLE hits noise floor)
+n_fit = length(omega_values) - 2
+if n_fit >= 3
+    cle_mean_rate = convergence_rate(omega_values[1:n_fit], cle_mean_errors[1:n_fit])
+    cle_fano_rate = convergence_rate(omega_values[1:n_fit], cle_fano_errors[1:n_fit])
 
     println()
-    @printf("  CLE  mean error scaling: Ω^{%.2f}  (Grima predicts Ω^{-1.5})\n", cle_mean_rate)
-    @printf("  CLE  Fano error scaling: Ω^{%.2f}  (Grima predicts Ω^{-2.0})\n", cle_fano_rate)
-    @printf("  BinTau mean error scaling: Ω^{%.2f}\n", bt_mean_rate)
-    @printf("  BinTau Fano error scaling: Ω^{%.2f}\n", bt_fano_rate)
+    @printf("  CLE  mean error scaling: Ω^{%.2f}  (Grima predicts Ω^{-1.5}, fitted to first %d points)\n", cle_mean_rate, n_fit)
+    @printf("  CLE  Fano error scaling: Ω^{%.2f}  (Grima predicts Ω^{-2.0}, fitted to first %d points)\n", cle_fano_rate, n_fit)
 end
 
 # ═══════════════════════════════════════════════════════════════
