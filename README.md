@@ -124,11 +124,11 @@ Four parameter regimes are tested covering the full range of telegraph behaviour
 
 ### Multi-gene steady state (Holimap)
 
-![Holimap analytical marginals vs switching-mode SSA for G=2-5 networks](figures/holimap_validation.png)
+![Holimap analytical marginals vs switching-mode BinomialTauLeap for G=2-5 networks](figures/holimap_validation.png)
 
 For multi-gene networks with switching-rate regulation, the `holimap_marginals` function computes semi-analytical per-gene marginal mRNA distributions using the 2nd-order Holimap method (Cao, Luo & Grima 2024). In the switching-rate model, regulation enters through protein-dependent promoter switching rates rather than transcription rates: activators increase the OFF-to-ON rate and repressors increase the ON-to-OFF rate. For each gene, Holimap iteratively solves for effective telegraph parameters via fixed-point iteration with a 2nd-order moment closure that accounts for the variance of regulating proteins through the Taylor expansion E[h(p)] = h(mu) + 0.5 h''(mu) sigma^2. The final per-gene marginals are computed from the converged effective parameters using the exact Peccoud-Ycart telegraph distribution. For a single unregulated gene, Holimap exactly recovers `telegraph_distribution`.
 
-Validation against switching-mode SSA (20000 cells) for chain-regulation networks with G=2-5 genes:
+Validation against switching-mode BinomialTauLeap (20000 cells) for chain-regulation networks with G=2-5 genes:
 
 | G | Max mean error | Max variance error | Max KS statistic |
 | --- | --- | --- | --- |

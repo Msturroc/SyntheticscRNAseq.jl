@@ -1,6 +1,6 @@
 #= ================================================================
    Holimap validation: compare analytical marginals against
-   switching-mode SSA for multi-gene networks (G=2-5).
+   switching-mode BinomialTauLeap for multi-gene networks (G=2-5).
 
    Uses weak regulation (small |A|, K_d=100, n=2) to stay in the
    regime where Holimap's 2nd-order moment closure is accurate.
@@ -121,7 +121,7 @@ for (row, G) in enumerate(2:5)
                         xlabel="mRNA count",
                         ylabel="Probability")
 
-        # SSA histogram (normalized)
+        # Simulation histogram (normalized)
         local sim_counts = Y[:, gene]
         local max_n = round(Int, maximum(sim_counts))
         local bins = 0:max_n
@@ -135,7 +135,7 @@ for (row, G) in enumerate(2:5)
         hist_counts ./= sum(hist_counts)
 
         barplot!(ax, collect(bins), hist_counts, color=(:steelblue, 0.4),
-                 label="SSA")
+                 label="BinomialTauLeap")
 
         # Holimap PMF
         local pmf = result.marginals[gene]
@@ -150,7 +150,7 @@ for (row, G) in enumerate(2:5)
     end
 end
 
-Label(fig[0, :], "Holimap vs switching-mode SSA: mRNA marginals",
+Label(fig[0, :], "Holimap vs switching-mode BinomialTauLeap: mRNA marginals",
       fontsize=18, font=:bold)
 
 mkpath("figures")
