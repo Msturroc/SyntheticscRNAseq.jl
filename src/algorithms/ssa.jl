@@ -40,10 +40,16 @@ function simulate(net::GeneNetwork, ::SSA, kin::KineticParams;
                   T::Float64=50.0,
                   readout::Symbol=:protein,
                   rng::AbstractRNG=Random.default_rng(),
-                  population::Union{Nothing, PopulationConfig}=nothing)
+                  population::Union{Nothing, PopulationConfig}=nothing,
+                  regulation_mode::Symbol=:transcription)
 
     if population !== nothing
         error("SSA with population dynamics not yet implemented. Use BinomialTauLeap or CLE.")
+    end
+
+    @assert regulation_mode in (:transcription, :switching) "regulation_mode must be :transcription or :switching"
+    if regulation_mode == :switching
+        @assert is_bursty(net) "switching regulation mode requires finite k_on/k_off"
     end
 
     G = net.G
@@ -77,11 +83,15 @@ function simulate(net::GeneNetwork, ::SSA, kin::KineticParams;
 
         while t < T
             a_total = 0.0
+            pf = Float64.(p)
             for i in 1:G
-                reg = regulatory_input(net, Float64.(p), i, kin.K_d, kin.n)
-
                 # Reaction 1: Transcription (gated by promoter state)
-                prop_transcription = promoter_on[i] ? max(reg + net.basals[i], 0.0) : 0.0
+                if regulation_mode == :transcription
+                    reg = regulatory_input(net, pf, i, kin.K_d, kin.n)
+                    prop_transcription = promoter_on[i] ? max(reg + net.basals[i], 0.0) : 0.0
+                else  # :switching — constant rate when ON
+                    prop_transcription = promoter_on[i] ? net.basals[i] : 0.0
+                end
                 propensities[4*(i-1) + 1] = prop_transcription
                 a_total += prop_transcription
 
@@ -104,13 +114,31 @@ function simulate(net::GeneNetwork, ::SSA, kin::KineticParams;
             # Telegraph switching reactions (if bursty)
             if bursty
                 for i in 1:G
-                    # Reaction 4G + 2(i-1) + 1: OFF → ON (rate k_on)
-                    prop_on = (!promoter_on[i] && isfinite(net.k_on[i])) ? net.k_on[i] : 0.0
+                    if regulation_mode == :switching
+                        # Protein-dependent switching rates
+                        sigma_b = net.k_on[i]
+                        sigma_u = net.k_off[i]
+                        for j in 1:G
+                            j == i && continue
+                            aij = net.interactions[i, j]
+                            aij == 0.0 && continue
+                            if aij > 0.0
+                                # Activator increases binding (OFF→ON) rate
+                                sigma_b += aij * net.basals[i] * hill_activation(pf[j], kin.K_d, kin.n)
+                            else
+                                # Repressor increases unbinding (ON→OFF) rate
+                                sigma_u += (-aij) * net.basals[i] * hill_activation(pf[j], kin.K_d, kin.n)
+                            end
+                        end
+                        prop_on = promoter_on[i] ? 0.0 : max(sigma_b, 0.0)
+                        prop_off = promoter_on[i] ? max(sigma_u, 0.0) : 0.0
+                    else
+                        # Constant switching rates (default)
+                        prop_on = (!promoter_on[i] && isfinite(net.k_on[i])) ? net.k_on[i] : 0.0
+                        prop_off = (promoter_on[i] && isfinite(net.k_off[i])) ? net.k_off[i] : 0.0
+                    end
                     propensities[4*G + 2*(i-1) + 1] = prop_on
                     a_total += prop_on
-
-                    # Reaction 4G + 2(i-1) + 2: ON → OFF (rate k_off)
-                    prop_off = (promoter_on[i] && isfinite(net.k_off[i])) ? net.k_off[i] : 0.0
                     propensities[4*G + 2*(i-1) + 2] = prop_off
                     a_total += prop_off
                 end

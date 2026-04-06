@@ -29,6 +29,9 @@ include("validate.jl")
 # ── Analytical solutions ─────────────────────────────────────────
 include("analytical.jl")
 
+# ── Holimap: multi-gene analytical marginals ─────────────────────
+include("holimap.jl")
+
 # ── Default algorithm selection ──────────────────────────────────
 include("default_algorithm.jl")
 
@@ -61,6 +64,7 @@ export ks_statistic, ks_critical_value, compare_moments, convergence_rate
 # Analytical solutions
 export telegraph_logpmf, telegraph_pmf, telegraph_distribution
 export telegraph_mean, telegraph_variance, telegraph_fano
+export holimap_marginals, HolimapResult
 
 # Population dynamics
 export PopulationState, initialize_population

@@ -14,5 +14,6 @@ using Statistics
     include("test_growth_feedback.jl")
     include("test_analytical_moments.jl")
     include("test_telegraph_distribution.jl")
+    include("test_holimap.jl")
     include("test_gpu_parity.jl")
 end

@@ -122,6 +122,28 @@ telegraph_fano(a, b, c)      # = 7.25
 
 Four parameter regimes are tested covering the full range of telegraph behaviour: constitutive (fast switching, near-Poisson), moderate bursting (overdispersed unimodal), strong bursting (geometric-like tail), and bimodal (slow switching with distinct OFF and ON peaks). SSA and BinomialTauLeap empirical distributions are compared against the exact PMF using the Kolmogorov-Smirnov statistic and L1 distance. The CLE is not included in this test because it does not model discrete promoter switching -- that limitation is quantified separately in the CLE accuracy scaling test below.
 
+### Multi-gene steady state (Holimap)
+
+For multi-gene networks with switching-rate regulation, the `holimap_marginals` function computes semi-analytical per-gene marginal mRNA distributions using the 2nd-order Holimap method (Cao, Luo & Grima 2024). In the switching-rate model, regulation enters through protein-dependent promoter switching rates rather than transcription rates: activators increase the OFF-to-ON rate and repressors increase the ON-to-OFF rate. For each gene, Holimap iteratively solves for effective telegraph parameters via fixed-point iteration with a 2nd-order moment closure that accounts for the variance of regulating proteins through the Taylor expansion E[h(p)] = h(mu) + 0.5 h''(mu) sigma^2. The final per-gene marginals are computed from the converged effective parameters using the exact Peccoud-Ycart telegraph distribution. For a single unregulated gene, Holimap exactly recovers `telegraph_distribution`.
+
+```julia
+using SyntheticscRNAseq
+
+basals = [2.0, 1.5]
+A = zeros(2, 2)
+A[2, 1] = 3.0   # protein 1 activates gene 2 (via switching rate)
+net = GeneNetwork(basals, A; k_on=[0.1, 0.05], k_off=[0.3, 0.2])
+
+kin = KineticParams(k_t=2.0, K_d=50.0, n=3.0, mu_m=0.1, mu_p=0.2)
+result = holimap_marginals(net, kin)
+
+result.means         # per-gene mRNA means
+result.marginals[1]  # gene 1 PMF vector
+result.converged     # true if fixed-point converged
+```
+
+The switching-rate regulation mode is also available in the SSA via the `regulation_mode=:switching` keyword, which simulates the same physical model for direct validation against the Holimap analytical results.
+
 ### CLE accuracy scaling (Grima 2011)
 
 ![CLE mean and Fano factor error vs system size on log-log axes](figures/cle_accuracy_scaling.png)
@@ -207,5 +229,7 @@ Thomas P, Shahrezaei V. Coordination of gene expression noise with cell size. Ce
 Grima R, Thomas P, Straube AV. How accurate are the nonlinear chemical Fokker-Planck and chemical Langevin equations? Journal of Chemical Physics, 2011.
 
 Grima R. An effective rate equation approach to reaction kinetics in small volumes. Journal of Chemical Physics, 2010.
+
+Cao Z, Luo Y, Grima R. Holimap: an accurate and efficient method for solving stochastic gene network dynamics. Nature Communications, 2024.
 
 Chatterjee A, Vlachos DG, Katsoulakis MA. Binomial distribution based tau-leap accelerated stochastic simulation. Journal of Chemical Physics, 2005.
