@@ -34,11 +34,17 @@ function simulate(net::GeneNetwork, alg::BinomialTauLeap, kin::KineticParams;
                   T::Float64=50.0,
                   readout::Symbol=:protein,
                   rng::AbstractRNG=Random.default_rng(),
-                  population::Union{Nothing, PopulationConfig}=nothing)
+                  population::Union{Nothing, PopulationConfig}=nothing,
+                  regulation_mode::Symbol=:transcription)
 
     if population !== nothing
         return _simulate_population(net, alg, kin, population;
                                     T=T, readout=readout, rng=rng)
+    end
+
+    @assert regulation_mode in (:transcription, :switching) "regulation_mode must be :transcription or :switching"
+    if regulation_mode == :switching
+        @assert is_bursty(net) "switching regulation mode requires finite k_on/k_off"
     end
 
     G = net.G
@@ -69,28 +75,61 @@ function simulate(net::GeneNetwork, alg::BinomialTauLeap, kin::KineticParams;
             end
         end
 
+        pf = Vector{Float64}(undef, G)
+
         for step in 1:n_steps
+            for g in 1:G; pf[g] = Float64(p[g]); end
+
             # Telegraph switching (if any gene is bursty)
             if bursty
                 for i in 1:G
                     isfinite(net.k_on[i]) || continue
-                    if promoter_on[i]
-                        # ON → OFF with probability 1 - exp(-k_off * dt)
-                        if rand(rng) < (1.0 - exp(-net.k_off[i] * dt))
-                            promoter_on[i] = false
+                    if regulation_mode == :switching
+                        # Protein-dependent switching rates
+                        sigma_b = net.k_on[i]
+                        sigma_u = net.k_off[i]
+                        for j in 1:G
+                            j == i && continue
+                            aij = net.interactions[i, j]
+                            aij == 0.0 && continue
+                            if aij > 0.0
+                                sigma_b += aij * net.basals[i] * hill_activation(pf[j], kin.K_d, kin.n)
+                            else
+                                sigma_u += (-aij) * net.basals[i] * hill_activation(pf[j], kin.K_d, kin.n)
+                            end
+                        end
+                        if promoter_on[i]
+                            if rand(rng) < (1.0 - exp(-max(sigma_u, 0.0) * dt))
+                                promoter_on[i] = false
+                            end
+                        else
+                            if rand(rng) < (1.0 - exp(-max(sigma_b, 0.0) * dt))
+                                promoter_on[i] = true
+                            end
                         end
                     else
-                        # OFF → ON with probability 1 - exp(-k_on * dt)
-                        if rand(rng) < (1.0 - exp(-net.k_on[i] * dt))
-                            promoter_on[i] = true
+                        if promoter_on[i]
+                            # ON → OFF with probability 1 - exp(-k_off * dt)
+                            if rand(rng) < (1.0 - exp(-net.k_off[i] * dt))
+                                promoter_on[i] = false
+                            end
+                        else
+                            # OFF → ON with probability 1 - exp(-k_on * dt)
+                            if rand(rng) < (1.0 - exp(-net.k_on[i] * dt))
+                                promoter_on[i] = true
+                            end
                         end
                     end
                 end
             end
 
             for i in 1:G
-                reg = regulatory_input(net, Float64.(p), i, kin.K_d, kin.n)
-                prop_transcription = max(reg + net.basals[i], 0.0)
+                if regulation_mode == :transcription
+                    reg = regulatory_input(net, pf, i, kin.K_d, kin.n)
+                    prop_transcription = max(reg + net.basals[i], 0.0)
+                else  # :switching — constant rate when ON
+                    prop_transcription = net.basals[i]
+                end
 
                 # Telegraph gating: transcription only when promoter is ON
                 if bursty && !promoter_on[i]

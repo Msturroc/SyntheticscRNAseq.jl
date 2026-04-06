@@ -44,7 +44,7 @@ end
 
 networks = Dict{Int, GeneNetwork}()
 holimap_results = Dict{Int, HolimapResult}()
-ssa_data = Dict{Int, Matrix{Float64}}()
+sim_data = Dict{Int, Matrix{Float64}}()
 
 n_cells = 20000
 T_sim = 500.0
@@ -63,29 +63,29 @@ for G in 2:5
     holimap_results[G] = result
     println("$(round(t_hm, digits=3))s, converged=$(result.converged), iters=$(result.iterations)")
 
-    # SSA (switching mode)
-    print("  SSA ($n_cells cells, T=$T_sim)... ")
-    t_ssa = @elapsed begin
-        Y = simulate(net, SSA(), kin;
+    # BinomialTauLeap (switching mode)
+    print("  BinomialTauLeap ($n_cells cells, T=$T_sim)... ")
+    t_sim = @elapsed begin
+        Y = simulate(net, BinomialTauLeap(0.05), kin;
                      cell_num=n_cells, T=T_sim, readout=:mrna,
                      rng=copy(rng), regulation_mode=:switching)
     end
-    ssa_data[G] = Y
-    println("$(round(t_ssa, digits=2))s")
+    sim_data[G] = Y
+    println("$(round(t_sim, digits=2))s")
 end
 
 # ── Print comparison table ──────────────────────────────────────
 
 println("\n┌────────┬──────┬──────────┬──────────┬──────────┬──────────┬──────────┐")
-println("│   G    │ Gene │ HM mean  │ SSA mean │ HM var   │ SSA var  │ KS stat  │")
+println("│   G    │ Gene │ HM mean  │ Sim mean │ HM var   │ Sim var  │ KS stat  │")
 println("├────────┼──────┼──────────┼──────────┼──────────┼──────────┼──────────┤")
 
 for G in 2:5
     result = holimap_results[G]
-    Y = ssa_data[G]
+    Y = sim_data[G]
     for gene in 1:G
-        ssa_mean = mean(Y[:, gene])
-        ssa_var = var(Y[:, gene])
+        sim_mean = mean(Y[:, gene])
+        sim_var = var(Y[:, gene])
 
         # KS statistic
         samples = sort(Y[:, gene])
@@ -99,7 +99,7 @@ for G in 2:5
             ks = max(ks, abs(F_an - F_emp))
         end
 
-        println("│ G=$(lpad(G, 2))   │  $(lpad(gene, 2))  │ $(lpad(round(result.means[gene], digits=2), 8)) │ $(lpad(round(ssa_mean, digits=2), 8)) │ $(lpad(round(result.variances[gene], digits=2), 8)) │ $(lpad(round(ssa_var, digits=2), 8)) │ $(lpad(round(ks, digits=4), 8)) │")
+        println("│ G=$(lpad(G, 2))   │  $(lpad(gene, 2))  │ $(lpad(round(result.means[gene], digits=2), 8)) │ $(lpad(round(sim_mean, digits=2), 8)) │ $(lpad(round(result.variances[gene], digits=2), 8)) │ $(lpad(round(sim_var, digits=2), 8)) │ $(lpad(round(ks, digits=4), 8)) │")
     end
 end
 ks_crit = 1.36 / sqrt(n_cells)
@@ -112,7 +112,7 @@ fig = Figure(size=(1200, 900))
 
 for (row, G) in enumerate(2:5)
     local result = holimap_results[G]
-    local Y = ssa_data[G]
+    local Y = sim_data[G]
 
     for gene in 1:min(G, 3)  # show up to 3 genes per row
         local col = gene
@@ -122,11 +122,11 @@ for (row, G) in enumerate(2:5)
                         ylabel="Probability")
 
         # SSA histogram (normalized)
-        local ssa_counts = Y[:, gene]
-        local max_n = round(Int, maximum(ssa_counts))
+        local sim_counts = Y[:, gene]
+        local max_n = round(Int, maximum(sim_counts))
         local bins = 0:max_n
         local hist_counts = zeros(length(bins))
-        for x in ssa_counts
+        for x in sim_counts
             local idx = round(Int, x) + 1
             if 1 <= idx <= length(hist_counts)
                 hist_counts[idx] += 1.0

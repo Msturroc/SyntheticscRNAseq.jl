@@ -37,7 +37,7 @@
     end
 
     # ── Test 2: two-gene activation (weak regulation) ───────────
-    @testset "two-gene activation vs SSA" begin
+    @testset "two-gene activation vs BinomialTauLeap" begin
         # Weak regulation with gradual Hill (n=2, K_d=100) keeps Holimap
         # in the regime where 2nd-order moment closure is accurate.
         kin = KineticParams(k_t=2.0, K_d=100.0, n=2.0,
@@ -52,25 +52,25 @@
         result = holimap_marginals(net, kin; nmax=200)
         @test result.converged
 
-        Y_ssa = simulate(net, SSA(), kin;
+        Y_sim = simulate(net, BinomialTauLeap(0.05), kin;
                          cell_num=20000, T=500.0, readout=:mrna,
                          rng=copy(rng), regulation_mode=:switching)
 
         for gene in 1:2
-            ssa_mean = mean(Y_ssa[:, gene])
-            ssa_var = var(Y_ssa[:, gene])
+            sim_mean = mean(Y_sim[:, gene])
+            sim_var = var(Y_sim[:, gene])
 
             # Moments should agree within 10% (weak regulation regime)
-            @test abs(result.means[gene] - ssa_mean) / max(ssa_mean, 1.0) < 0.10
-            @test abs(result.variances[gene] - ssa_var) / max(ssa_var, 1.0) < 0.15
+            @test abs(result.means[gene] - sim_mean) / max(sim_mean, 1.0) < 0.10
+            @test abs(result.variances[gene] - sim_var) / max(sim_var, 1.0) < 0.15
 
             # KS test on marginal
-            ssa_samples = sort(Y_ssa[:, gene])
+            sim_samples = sort(Y_sim[:, gene])
             pmf = result.marginals[gene]
             cdf_analytical = cumsum(pmf)
             ks_stat = 0.0
-            n_samples = length(ssa_samples)
-            for (k, x) in enumerate(ssa_samples)
+            n_samples = length(sim_samples)
+            for (k, x) in enumerate(sim_samples)
                 idx = round(Int, x) + 1
                 F_analytical = idx <= length(cdf_analytical) ? cdf_analytical[idx] : 1.0
                 F_empirical = k / n_samples
@@ -82,7 +82,7 @@
     end
 
     # ── Test 3: toggle switch (mutual repression) ───────────────
-    @testset "toggle switch vs SSA" begin
+    @testset "toggle switch vs BinomialTauLeap" begin
         # Weak mutual repression — Holimap ignores cross-gene correlations
         # so tolerance is looser for feedback loops.
         kin = KineticParams(k_t=2.0, K_d=100.0, n=2.0,
@@ -98,20 +98,20 @@
         result = holimap_marginals(net, kin; nmax=200)
         @test result.converged
 
-        Y_ssa = simulate(net, SSA(), kin;
+        Y_sim = simulate(net, BinomialTauLeap(0.05), kin;
                          cell_num=20000, T=500.0, readout=:mrna,
                          rng=copy(rng), regulation_mode=:switching)
 
         for gene in 1:2
-            ssa_mean = mean(Y_ssa[:, gene])
-            ssa_var = var(Y_ssa[:, gene])
-            @test abs(result.means[gene] - ssa_mean) / max(ssa_mean, 1.0) < 0.15
-            @test abs(result.variances[gene] - ssa_var) / max(ssa_var, 1.0) < 0.25
+            sim_mean = mean(Y_sim[:, gene])
+            sim_var = var(Y_sim[:, gene])
+            @test abs(result.means[gene] - sim_mean) / max(sim_mean, 1.0) < 0.15
+            @test abs(result.variances[gene] - sim_var) / max(sim_var, 1.0) < 0.25
         end
     end
 
     # ── Test 4: repressilator (3-gene cyclic repression) ────────
-    @testset "repressilator vs SSA" begin
+    @testset "repressilator vs BinomialTauLeap" begin
         kin = KineticParams(k_t=2.0, K_d=100.0, n=2.0,
                             mu_m=0.1, mu_p=0.2, dilution=0.0)
         basals = [3.0, 3.0, 3.0]
@@ -126,15 +126,15 @@
         result = holimap_marginals(net, kin; nmax=200)
         @test result.converged
 
-        Y_ssa = simulate(net, SSA(), kin;
+        Y_sim = simulate(net, BinomialTauLeap(0.05), kin;
                          cell_num=20000, T=500.0, readout=:mrna,
                          rng=copy(rng), regulation_mode=:switching)
 
         for gene in 1:3
-            ssa_mean = mean(Y_ssa[:, gene])
-            ssa_var = var(Y_ssa[:, gene])
-            @test abs(result.means[gene] - ssa_mean) / max(ssa_mean, 1.0) < 0.15
-            @test abs(result.variances[gene] - ssa_var) / max(ssa_var, 1.0) < 0.30
+            sim_mean = mean(Y_sim[:, gene])
+            sim_var = var(Y_sim[:, gene])
+            @test abs(result.means[gene] - sim_mean) / max(sim_mean, 1.0) < 0.15
+            @test abs(result.variances[gene] - sim_var) / max(sim_var, 1.0) < 0.30
         end
     end
 
